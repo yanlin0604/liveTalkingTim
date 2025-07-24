@@ -184,7 +184,16 @@ class BaseReal:
                     '-i', '-',
                     '-pix_fmt', 'yuv420p',
                     '-vcodec', "h264",
-                    #'-f' , 'flv',     
+                    '-crf', str(crf),  # 优先使用CRF恒定质量模式
+                    '-b:v', bitrate,  # 设置视频码率作为参考
+                    '-maxrate', '2000k',  # 设置更高的最大码率上限
+                    '-bufsize', '4000k',  # 增大缓冲区确保稳定性
+                    '-preset', preset,  # 编码速度预设
+                    '-profile:v', 'high',  # 使用高质量配置
+                    '-level', '4.1',  # H.264标准
+                    '-g', '50',  # 关键帧间隔，确保质量稳定
+                    '-keyint_min', '25',  # 最小关键帧间隔
+                    '-sc_threshold', '0',  # 禁用场景切换检测，保持稳定
                     f'temp{self.opt.sessionid}.mp4']
         self._record_video_pipe = subprocess.Popen(command, shell=False, stdin=subprocess.PIPE)
 
