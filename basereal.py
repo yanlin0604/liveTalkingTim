@@ -96,12 +96,14 @@ class BaseReal:
         self._record_audio_pipe = None
         self.width = self.height = 0
 
-        self.curr_state=0
-        self.custom_img_cycle = {}
-        self.custom_audio_cycle = {}
-        self.custom_audio_index = {}
-        self.custom_index = {}
-        self.custom_opt = {}
+        # 动作状态管理
+        self.curr_state=0  # 当前状态
+        self.custom_img_cycle = {}  # 自定义图像序列
+        self.custom_audio_cycle = {}  # 自定义音频序列
+        self.custom_audio_index = {}  # 自定义音频索引
+        self.custom_index = {}  # 自定义索引
+        self.custom_opt = {}  # 自定义选项
+        self.use_custom_silent = True  # 静音时是否使用自定义动作的开关
         self.__loadcustom()
 
     def put_msg_txt(self,msg,eventpoint=None):
@@ -307,6 +309,23 @@ class BaseReal:
             self.custom_audio_index[audiotype] = 0
             self.custom_index[audiotype] = 0
 
+    def get_default_silent_audiotype(self):
+        """获取静音时的默认动作类型"""
+        # 如果开关开启且配置了audiotype=2，则使用自定义动作
+        if self.use_custom_silent and self.custom_index.get(2) is not None:
+            return 2
+        # 否则返回1（静音状态）
+        return 1
+
+    def is_speaking(self):
+        """检查当前是否在说话"""
+        return getattr(self, 'speaking', False)
+
+    def set_use_custom_silent(self, enabled):
+        """设置静音时是否使用自定义动作"""
+        self.use_custom_silent = enabled
+        print(f"静音时使用自定义动作: {'开启' if enabled else '关闭'}")
+
     def process_frames(self,quit_event,loop=None,audio_track=None,video_track=None):
         enable_transition = False  # 设置为False禁用过渡效果，True启用
         
@@ -352,7 +371,13 @@ class BaseReal:
 
             if audio_frames[0][1]!=0 and audio_frames[1][1]!=0: #全为静音数据，只需要取fullimg
                 self.speaking = False
-                audiotype = audio_frames[0][1]
+                # 静音时使用默认的静音动作类型
+                audiotype = self.get_default_silent_audiotype()
+                # 调试信息：显示当前使用的audiotype
+                if hasattr(self, '_last_silent_audiotype') and self._last_silent_audiotype != audiotype:
+                    print(f"静音状态切换到audiotype: {audiotype}")
+                self._last_silent_audiotype = audiotype
+                
                 if self.custom_index.get(audiotype) is not None: #有自定义视频
                     mirindex = self.mirror_index(len(self.custom_img_cycle[audiotype]),self.custom_index[audiotype])
                     target_frame = self.custom_img_cycle[audiotype][mirindex]

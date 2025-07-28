@@ -1,0 +1,10 @@
+# Ollama LLM 集成的可选依赖
+# 如果您想使用 Ollama 作为 LLM 提供商，请安装以下依赖
+
+# Ollama Python 客户端
+ollama>=0.1.0
+
+# 注意：
+# 1. 这是可选依赖，只有在使用 --llm_provider ollama 时才需要
+# 2. 您还需要单独安装 Ollama 服务器：https://ollama.ai
+# 3. 安装命令：pip install -r requirements_ollama.txt

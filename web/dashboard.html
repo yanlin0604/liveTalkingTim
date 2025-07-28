@@ -91,6 +91,24 @@
             color: white;
         }
 
+        .btn-warning {
+            background-color: #ffc107;
+            border-color: #ffc107;
+            color: #212529;
+        }
+
+        .btn-warning:hover {
+            background-color: #ffca2c;
+            border-color: #ffc720;
+            color: #212529;
+        }
+
+        .btn-warning:active {
+            background-color: #ffcd39;
+            border-color: #ffc720;
+            transform: scale(0.98);
+        }
+
         .form-control {
             border-radius: var(--border-radius);
             padding: 10px 15px;
@@ -255,6 +273,41 @@
             font-size: 14px;
             color: #6c757d;
         }
+
+        .speaking-status {
+            text-align: center;
+            padding: 10px;
+            border-radius: var(--border-radius);
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+        }
+
+        .status-indicator {
+            font-size: 24px;
+            margin-bottom: 5px;
+            transition: all 0.3s ease;
+        }
+
+        .status-indicator.speaking {
+            color: #28a745;
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-indicator.silent {
+            color: #6c757d;
+        }
+
+        .status-text {
+            display: block;
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
         
         .video-size-control {
             margin-top: 15px;
@@ -275,6 +328,8 @@
                 box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
             }
         }
+
+
     </style>
 </head>
 <body>
@@ -323,6 +378,38 @@
                                             <i class="bi bi-stop-fill"></i> 停止录制
                                         </button>
                                     </div>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-8 mb-3">
+                                    <button class="btn btn-warning w-100" id="btn_interrupt_talk">
+                                        <i class="bi bi-hand-index"></i> 打断数字人说话
+                                    </button>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <div class="speaking-status" id="speaking-status">
+                                        <div class="status-indicator" id="status-indicator">
+                                            <i class="bi bi-mic-mute"></i>
+                                        </div>
+                                        <small class="status-text" id="status-text">静音中</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 静音时使用自定义动作开关 -->
+                            <div class="row">
+                                <div class="col-12 mb-3">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="auto-silent-custom" checked>
+                                        <label class="form-check-label" for="auto-silent-custom">
+                                            <i class="bi bi-person-video2"></i> 静音时自动使用自定义动作 (audiotype=2)
+                                        </label>
+                                    </div>
+                                    <small class="text-muted">
+                                        <i class="bi bi-info-circle"></i> 
+                                        开启后，当数字人不说话时会自动使用custom_config.json中audiotype=2的配置
+                                    </small>
                                 </div>
                             </div>
 
@@ -472,7 +559,10 @@
                 start();
                 $(this).hide();
                 $('#stop').show();
-                
+
+                // 启动说话状态检查
+                startSpeakingStatusCheck();
+
                 // 添加定时器检查视频流是否已加载
                 let connectionCheckTimer = setInterval(function() {
                     const video = document.getElementById('video');
@@ -480,9 +570,11 @@
                     if (video.readyState >= 3 && video.videoWidth > 0) {
                         updateConnectionStatus('connected');
                         clearInterval(connectionCheckTimer);
+                        // 连接成功后自动设置默认动作
+                        autoSetDefaultAction();
                     }
                 }, 2000); // 每2秒检查一次
-                
+
                 // 60秒后如果还是连接中状态，就停止检查
                 setTimeout(function() {
                     if (connectionCheckTimer) {
@@ -496,6 +588,10 @@
                 $(this).hide();
                 $('#start').show();
                 updateConnectionStatus('disconnected');
+
+                // 停止说话状态检查并重置状态
+                stopSpeakingStatusCheck();
+                updateSpeakingStatus(false);
             });
 
             // 录制功能
@@ -543,6 +639,92 @@
                         $('#recording-indicator').removeClass('active');
                     } else {
                         console.error('Failed to stop recording.');
+                    }
+                }).catch(function(error) {
+                    console.error('Error:', error);
+                });
+            });
+
+            // 打断数字人说话功能
+            $('#btn_interrupt_talk').click(function() {
+                console.log('Interrupting digital human...');
+
+                // 添加视觉反馈
+                const $btn = $(this);
+                const originalText = $btn.html();
+                $btn.prop('disabled', true);
+                $btn.html('<i class="bi bi-hourglass-split"></i> 正在打断...');
+
+                fetch('/interrupt_talk', {
+                    body: JSON.stringify({
+                        sessionid: parseInt(document.getElementById('sessionid').value),
+                    }),
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    method: 'POST'
+                }).then(function(response) {
+                    return response.json();
+                }).then(function(data) {
+                    if (data.code === 0) {
+                        console.log('Successfully interrupted digital human.');
+                        // 成功反馈
+                        $btn.html('<i class="bi bi-check-circle"></i> 已打断');
+                        $btn.removeClass('btn-warning').addClass('btn-success');
+
+                        // 2秒后恢复原状
+                        setTimeout(function() {
+                            $btn.html(originalText);
+                            $btn.removeClass('btn-success').addClass('btn-warning');
+                            $btn.prop('disabled', false);
+                        }, 2000);
+                    } else {
+                        console.error('Failed to interrupt:', data.msg);
+                        // 错误反馈
+                        $btn.html('<i class="bi bi-exclamation-triangle"></i> 打断失败');
+                        $btn.removeClass('btn-warning').addClass('btn-danger');
+
+                        // 2秒后恢复原状
+                        setTimeout(function() {
+                            $btn.html(originalText);
+                            $btn.removeClass('btn-danger').addClass('btn-warning');
+                            $btn.prop('disabled', false);
+                        }, 2000);
+                    }
+                }).catch(function(error) {
+                    console.error('Error:', error);
+                    // 网络错误反馈
+                    $btn.html('<i class="bi bi-wifi-off"></i> 网络错误');
+                    $btn.removeClass('btn-warning').addClass('btn-danger');
+
+                    // 2秒后恢复原状
+                    setTimeout(function() {
+                        $btn.html(originalText);
+                        $btn.removeClass('btn-danger').addClass('btn-warning');
+                        $btn.prop('disabled', false);
+                    }, 2000);
+                });
+            });
+
+            // 静音时使用自定义动作开关
+            $('#auto-silent-custom').change(function() {
+                const enabled = $(this).is(':checked');
+                
+                fetch('/set_custom_silent', {
+                    body: JSON.stringify({
+                        sessionid: parseInt(document.getElementById('sessionid').value),
+                        enabled: enabled
+                    }),
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    method: 'POST'
+                }).then(function(response) {
+                    return response.json();
+                }).then(function(data) {
+                    if (data.code === 0) {
+                        const statusMsg = enabled ? '已开启静音时使用自定义动作' : '已关闭静音时使用自定义动作';
+                        addChatMessage(statusMsg, 'system');
                     }
                 }).catch(function(error) {
                     console.error('Error:', error);
@@ -719,6 +901,75 @@
                 }, 500); 
             }
 
+            // 数字人说话状态检查功能
+            let speakingStatusTimer = null;
+
+            function checkSpeakingStatus() {
+                fetch('/is_speaking', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sessionid: parseInt(document.getElementById('sessionid').value) || 0
+                    })
+                }).then(function(response) {
+                    return response.json();
+                }).then(function(data) {
+                    if (data.code === 0) {
+                        updateSpeakingStatus(data.data);
+                    }
+                }).catch(function(error) {
+                    console.error('检查说话状态失败:', error);
+                });
+            }
+
+            function updateSpeakingStatus(statusData) {
+                const $indicator = $('#status-indicator');
+                const $text = $('#status-text');
+                const $interruptBtn = $('#btn_interrupt_talk');
+
+                // 兼容旧格式（布尔值）和新格式（对象）
+                const isSpeaking = typeof statusData === 'boolean' ? statusData : statusData.is_speaking;
+                const currentAudiotype = typeof statusData === 'object' ? statusData.current_audiotype : null;
+                const defaultSilentAudiotype = typeof statusData === 'object' ? statusData.default_silent_audiotype : 2;
+
+                if (isSpeaking) {
+                    $indicator.removeClass('silent').addClass('speaking');
+                    $indicator.html('<i class="bi bi-mic"></i>');
+                    $text.text('正在说话');
+                    $interruptBtn.prop('disabled', false);
+                } else {
+                    $indicator.removeClass('speaking').addClass('silent');
+                    $indicator.html('<i class="bi bi-person-video2"></i>');
+                    
+                    // 显示当前使用的audiotype
+                    const audiotypeText = currentAudiotype !== null ? currentAudiotype : defaultSilentAudiotype;
+                    $text.text(`静音中 (使用audiotype=${audiotypeText})`);
+                    
+                    // 不禁用打断按钮，因为可能有队列中的消息
+                }
+            }
+
+            // 启动状态检查定时器
+            function startSpeakingStatusCheck() {
+                if (speakingStatusTimer) {
+                    clearInterval(speakingStatusTimer);
+                }
+                speakingStatusTimer = setInterval(checkSpeakingStatus, 1000); // 每秒检查一次
+                checkSpeakingStatus(); // 立即检查一次
+            }
+
+            // 停止状态检查定时器
+            function stopSpeakingStatusCheck() {
+                if (speakingStatusTimer) {
+                    clearInterval(speakingStatusTimer);
+                    speakingStatusTimer = null;
+                }
+            }
+
+
+
             // WebRTC 相关功能
             if (typeof window.onWebRTCConnected === 'function') {
                 const originalOnConnected = window.onWebRTCConnected;
@@ -767,6 +1018,24 @@
                     console.error('WebRTC播放失败:', reason);
                 });
             }
+
+            // 连接成功后的处理
+            function autoSetDefaultAction() {
+                // 显示提示信息
+                addChatMessage('连接成功！', 'system');
+                
+                if ($('#auto-silent-custom').is(':checked')) {
+                    addChatMessage('✅ 静音时将自动使用audiotype=2的自定义动作', 'system');
+                }
+            }
+
+            // 页面加载时显示配置信息
+            $(document).ready(function() {
+                // 显示欢迎信息
+                setTimeout(function() {
+                    addChatMessage('💡 静音时自动使用自定义动作功能已就绪', 'system');
+                }, 1000);
+            });
         });
     </script>
 </body>

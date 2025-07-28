@@ -401,6 +401,10 @@ class LipReal(BaseReal):
         if self.mask_img is None:
             raise ValueError("找不到蒙版图像: " + mask_path)
 
+        # 颜色匹配配置参数
+        self.enable_color_matching = getattr(opt, 'enable_color_matching', True)
+        self.color_matching_strength = getattr(opt, 'color_matching_strength', 0.6)
+
         # 添加渐变过渡相关变量
         self.last_generated_frame = None  # 保存最后一帧生成的面部
         self.transition_frames = 10  # 过渡帧数（约0.4秒）
@@ -459,7 +463,7 @@ class LipReal(BaseReal):
             return copy.deepcopy(self.frame_list_cycle[idx])
 
     def _apply_mask_blend(self, combine_frame, res_frame, bbox):
-        """应用蒙版融合"""
+        """应用蒙版融合，包含颜色匹配"""
         y1, y2, x1, x2 = bbox
 
         # 调整蒙版大小到面部区域
@@ -473,15 +477,63 @@ class LipReal(BaseReal):
         alpha = np.clip(dist / feather_radius, 0, 1)
         alpha = cv2.GaussianBlur(alpha, (5, 5), 0)  # 高斯模糊平滑边缘
 
-        # 融合图像：alpha融合生成面部和原始面部
+        # 获取原始面部和生成面部
         original_face = combine_frame[y1:y2, x1:x2].astype(np.float32)
         generated_face = res_frame.astype(np.float32)
+
+        # 应用颜色匹配（如果启用）
+        if self.enable_color_matching:
+            color_matched_face = self._apply_color_matching(generated_face, original_face, alpha)
+        else:
+            color_matched_face = generated_face
+
+        # 融合图像：alpha融合颜色匹配后的生成面部和原始面部
         blended_face = (
-            alpha[..., None] * generated_face + (1 - alpha[..., None]) * original_face
+            alpha[..., None] * color_matched_face + (1 - alpha[..., None]) * original_face
         ).astype(np.uint8)
 
         combine_frame[y1:y2, x1:x2] = blended_face
         return combine_frame
+
+    def _apply_color_matching(self, generated_face, original_face, alpha):
+        """应用颜色匹配，使生成的嘴型颜色与原始面部更匹配"""
+        try:
+            # 创建嘴唇区域蒙版（alpha值较高的区域）
+            lip_mask = (alpha > 0.3).astype(np.float32)
+
+            if np.sum(lip_mask) == 0:
+                return generated_face
+
+            # 计算原始面部和生成面部在嘴唇区域的平均颜色
+            original_lip_color = self._get_average_color(original_face, lip_mask)
+            generated_lip_color = self._get_average_color(generated_face, lip_mask)
+
+            # 计算颜色差异
+            color_diff = original_lip_color - generated_lip_color
+
+            # 应用颜色校正，强度根据alpha值调整
+            color_matched_face = generated_face.copy()
+            for c in range(3):  # BGR三个通道
+                adjustment = color_diff[c] * alpha * self.color_matching_strength
+                color_matched_face[:, :, c] = np.clip(
+                    color_matched_face[:, :, c] + adjustment, 0, 255
+                )
+
+            return color_matched_face
+
+        except Exception as e:
+            logger.warning(f"颜色匹配失败，使用原始生成面部: {e}")
+            return generated_face
+
+    def _get_average_color(self, image, mask):
+        """计算蒙版区域的平均颜色"""
+        masked_pixels = image * mask[..., None]
+        total_weight = np.sum(mask)
+        if total_weight == 0:
+            return np.array([0, 0, 0])
+
+        avg_color = np.sum(masked_pixels, axis=(0, 1)) / total_weight
+        return avg_color
 
     def _apply_transition_blend(
         self, combine_frame, res_frame, bbox, transition_weight

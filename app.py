@@ -83,6 +83,19 @@ def build_nerfreal(sessionid:int)->BaseReal:
 
 #@app.route('/offer', methods=['POST'])
 async def offer(request):
+    """
+    WebRTC连接建立接口
+
+    功能：处理客户端的WebRTC SDP offer，建立音视频连接
+    方法：POST
+    参数：
+        - sdp: WebRTC会话描述协议数据
+        - type: SDP类型（通常为"offer"）
+    返回：
+        - sdp: 服务端的SDP answer
+        - type: SDP类型（"answer"）
+        - sessionid: 分配的会话ID
+    """
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
 
@@ -142,6 +155,30 @@ async def offer(request):
     )
 
 async def human(request):
+    """
+    文本交互接口
+
+    功能：发送文本消息给数字人，支持直接播报和AI对话两种模式
+    方法：POST
+    参数：
+        - text: 要发送的文本内容
+        - type: 消息类型
+            * "echo": 直接播报模式，数字人直接说出文本内容
+            * "chat": AI对话模式，将文本发送给LLM处理后播报回复
+        - interrupt: 是否打断当前说话（可选，默认false）
+        - sessionid: 会话ID（可选，默认0）
+    返回：
+        - code: 状态码（0=成功，-1=失败）
+        - msg: 状态消息
+
+    示例：
+        {
+            "text": "你好，数字人",
+            "type": "echo",
+            "interrupt": true,
+            "sessionid": 0
+        }
+    """
     try:
         params = await request.json()
 
@@ -171,6 +208,27 @@ async def human(request):
         )
 
 async def interrupt_talk(request):
+    """
+    打断数字人说话接口
+
+    功能：立即停止数字人当前的说话，清空待播放的消息队列
+    方法：POST
+    参数：
+        - sessionid: 会话ID（可选，默认0）
+    返回：
+        - code: 状态码（0=成功，-1=失败）
+        - msg: 状态消息
+
+    使用场景：
+        - 用户需要紧急打断数字人
+        - 切换话题时清空当前播放队列
+        - 重置对话状态
+
+    示例：
+        {
+            "sessionid": 0
+        }
+    """
     try:
         params = await request.json()
 
@@ -193,6 +251,23 @@ async def interrupt_talk(request):
         )
 
 async def humanaudio(request):
+    """
+    音频交互接口
+
+    功能：接收用户音频文件，进行语音识别后转换为文本交互
+    方法：POST (multipart/form-data)
+    参数：
+        - file: 音频文件（支持wav、mp3等格式）
+        - sessionid: 会话ID（可选，默认0）
+    返回：
+        - code: 状态码（0=成功，-1=失败）
+        - msg: 状态消息
+
+    流程：
+        1. 接收音频文件
+        2. 进行语音识别转换为文本
+        3. 自动调用相应的处理逻辑
+    """
     try:
         form= await request.post()
         sessionid = int(form.get('sessionid',0))
@@ -217,6 +292,24 @@ async def humanaudio(request):
         )
 
 async def set_audiotype(request):
+    """
+    设置音频类型接口
+
+    功能：设置数字人的音频播放类型和相关参数
+    方法：POST
+    参数：
+        - sessionid: 会话ID（可选，默认0）
+        - audiotype: 音频类型标识
+        - reinit: 是否重新初始化（布尔值）
+    返回：
+        - code: 状态码（0=成功，-1=失败）
+        - msg: 状态消息
+
+    使用场景：
+        - 切换不同的音频播放模式
+        - 动态调整音频参数
+        - 重置音频状态
+    """
     try:
         params = await request.json()
 
@@ -238,7 +331,66 @@ async def set_audiotype(request):
             ),
         )
 
+async def set_custom_silent(request):
+    """
+    设置静音时是否使用自定义动作接口
+
+    功能：控制数字人在静音时是否自动使用audiotype=2的自定义动作
+    方法：POST
+    参数：
+        - sessionid: 会话ID（可选，默认0）
+        - enabled: 是否启用（布尔值）
+    返回：
+        - code: 状态码（0=成功，-1=失败）
+        - msg: 状态消息
+    """
+    try:
+        params = await request.json()
+        sessionid = params.get('sessionid', 0)
+        enabled = params.get('enabled', True)
+        
+        nerfreals[sessionid].set_use_custom_silent(enabled)
+        
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps(
+                {"code": 0, "msg": "ok"}
+            ),
+        )
+    except Exception as e:
+        logger.exception('exception:')
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps(
+                {"code": -1, "msg": str(e)}
+            ),
+        )
+
 async def record(request):
+    """
+    录制控制接口
+
+    功能：控制数字人视频和音频的录制功能
+    方法：POST
+    参数：
+        - sessionid: 会话ID（可选，默认0）
+        - type: 录制操作类型
+            * "start_record": 开始录制
+            * "stop_record": 停止录制
+        - path: 录制文件保存路径（开始录制时需要）
+    返回：
+        - code: 状态码（0=成功，-1=失败）
+        - msg: 状态消息
+
+    使用场景：
+        - 录制数字人对话视频
+        - 保存重要的交互内容
+        - 生成演示材料
+
+    示例：
+        开始录制: {"type": "start_record", "path": "/path/to/video.mp4", "sessionid": 0}
+        停止录制: {"type": "stop_record", "sessionid": 0}
+    """
     try:
         params = await request.json()
 
@@ -264,14 +416,46 @@ async def record(request):
         )
 
 async def is_speaking(request):
+    """
+    检查数字人说话状态接口
+
+    功能：查询指定会话的数字人是否正在说话
+    方法：POST
+    参数：
+        - sessionid: 会话ID（可选，默认0）
+    返回：
+        - code: 状态码（0=成功）
+        - data: 说话状态（true=正在说话，false=未说话）
+
+    使用场景：
+        - 判断是否可以发送新消息
+        - 实现智能打断逻辑
+        - 监控数字人状态
+        - 同步前端UI状态
+
+    示例：
+        请求: {"sessionid": 0}
+        响应: {"code": 0, "data": true}
+    """
     params = await request.json()
 
     sessionid = params.get('sessionid',0)
+    nerfreal = nerfreals[sessionid]
+    
+    # 获取当前状态信息
+    is_speaking = nerfreal.is_speaking()
+    current_audiotype = getattr(nerfreal, '_last_silent_audiotype', None) if not is_speaking else None
+    
     return web.Response(
         content_type="application/json",
-        text=json.dumps(
-            {"code": 0, "data": nerfreals[sessionid].is_speaking()}
-        ),
+        text=json.dumps({
+            "code": 0, 
+            "data": {
+                "is_speaking": is_speaking,
+                "current_audiotype": current_audiotype,
+                "default_silent_audiotype": nerfreal.get_default_silent_audiotype()
+            }
+        }),
     )
 
 
@@ -333,6 +517,10 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=16, help="infer batch size (1-32, lower=less latency, higher=more efficient)")
     parser.add_argument('--auto_batch_size', action='store_true', help="automatically adjust batch size based on transport type")
 
+    # 颜色匹配参数
+    parser.add_argument('--enable_color_matching', action='store_true', default=True, help="enable color matching between generated lips and original face")
+    parser.add_argument('--color_matching_strength', type=float, default=0.6, help="color matching strength (0.0-1.0, higher=stronger correction)")
+
     parser.add_argument('--customvideo_config', type=str, default='', help="custom action json")
 
     parser.add_argument('--tts', type=str, default='edgetts', help="tts service type") #xtts gpt-sovits cosyvoice
@@ -341,6 +529,16 @@ if __name__ == '__main__':
     parser.add_argument('--TTS_SERVER', type=str, default='http://127.0.0.1:9880') # http://localhost:9000
     # parser.add_argument('--CHARACTER', type=str, default='test')
     # parser.add_argument('--EMOTION', type=str, default='default')
+
+    # LLM配置参数
+    parser.add_argument('--llm_provider', type=str, default='dashscope', choices=['dashscope', 'ollama'],
+                       help="LLM provider: dashscope (阿里云) or ollama (本地)")
+    parser.add_argument('--llm_model', type=str, default='qwen-plus',
+                       help="LLM model name (e.g., qwen-plus for dashscope, llama3.2 for ollama)")
+    parser.add_argument('--llm_system_prompt', type=str, default='You are a helpful assistant.',
+                       help="System prompt for LLM")
+    parser.add_argument('--ollama_host', type=str, default='http://localhost:11434',
+                       help="Ollama server host (only used when llm_provider=ollama)")
 
     parser.add_argument('--model', type=str, default='musetalk', help='model type: musetalk, wav2lip, ultralight')
     parser.add_argument('--model_path', type=str, default='', help='path to model file (auto-detect if empty)')
@@ -461,13 +659,21 @@ if __name__ == '__main__':
     #############################################################################
     appasync = web.Application(client_max_size=1024**2*100)
     appasync.on_shutdown.append(on_shutdown)
-    appasync.router.add_post("/offer", offer)
-    appasync.router.add_post("/human", human)
-    appasync.router.add_post("/humanaudio", humanaudio)
-    appasync.router.add_post("/set_audiotype", set_audiotype)
-    appasync.router.add_post("/record", record)
-    appasync.router.add_post("/interrupt_talk", interrupt_talk)
-    appasync.router.add_post("/is_speaking", is_speaking)
+    # WebRTC相关接口
+    appasync.router.add_post("/offer", offer)  # WebRTC连接建立，处理SDP offer
+
+    # 文本交互接口
+    appasync.router.add_post("/human", human)  # 发送文本消息给数字人（支持echo/chat模式，可选打断）
+
+    # 音频交互接口
+    appasync.router.add_post("/humanaudio", humanaudio)  # 发送音频数据给数字人进行语音识别
+    appasync.router.add_post("/set_audiotype", set_audiotype)  # 设置音频类型和参数
+    appasync.router.add_post("/set_custom_silent", set_custom_silent)  # 设置静音时是否使用自定义动作
+    appasync.router.add_post("/record", record)  # 录制功能控制接口
+
+    # 对话控制接口
+    appasync.router.add_post("/interrupt_talk", interrupt_talk)  # 打断数字人当前说话
+    appasync.router.add_post("/is_speaking", is_speaking)  # 检查数字人是否正在说话
     appasync.router.add_static('/',path='web')
 
     # Configure default CORS settings.
