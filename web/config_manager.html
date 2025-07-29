@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveTalking 配置管理器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .config-section {
+            margin-bottom: 30px;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e0e0e0;
+            font-weight: bold;
+            color: #333;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .section-header:hover {
+            background: #e9ecef;
+        }
+        
+        .section-content {
+            padding: 20px;
+            display: none;
+        }
+        
+        .section-content.active {
+            display: block;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: 200px 1fr 100px;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .form-label {
+            font-weight: 500;
+            color: #555;
+        }
+        
+        .form-control {
+            padding: 10px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-control:focus {
+            outline: none;
+            border-color: #4facfe;
+        }
+        
+        .form-control.changed {
+            border-color: #28a745;
+            background-color: #f8fff9;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: #4facfe;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #3d8bfe;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #218838;
+        }
+        
+        .btn-warning {
+            background: #ffc107;
+            color: #212529;
+        }
+        
+        .btn-warning:hover {
+            background: #e0a800;
+        }
+        
+        .actions {
+            position: sticky;
+            bottom: 0;
+            background: white;
+            padding: 20px;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+        }
+        
+        .status {
+            padding: 10px 20px;
+            border-radius: 6px;
+            margin: 10px 0;
+            display: none;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .toggle-icon {
+            transition: transform 0.3s;
+        }
+        
+        .toggle-icon.rotated {
+            transform: rotate(180deg);
+        }
+        
+        .description {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            grid-column: 2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎭 LiveTalking 配置管理器</h1>
+            <p>实时修改配置参数，无需重启服务</p>
+        </div>
+        
+        <div class="content">
+            <div id="status" class="status"></div>
+            
+            <!-- 基础配置 -->
+            <div class="config-section">
+                <div class="section-header" onclick="toggleSection(this)">
+                    <span>🔧 基础配置</span>
+                    <span class="toggle-icon">▼</span>
+                </div>
+                <div class="section-content">
+                    <div class="form-group">
+                        <label class="form-label">模型类型</label>
+                        <select class="form-control" id="model">
+                            <option value="musetalk">MuseTalk</option>
+                            <option value="wav2lip">Wav2Lip</option>
+                            <option value="ultralight">UltraLight</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="updateConfig('model')">应用</button>
+                        <div class="description">数字人模型类型，影响生成效果和性能</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">数字人ID</label>
+                        <input type="text" class="form-control" id="avatar_id" placeholder="avator_1">
+                        <button class="btn btn-primary" onclick="updateConfig('avatar_id')">应用</button>
+                        <div class="description">对应data/avatars目录中的数字人文件夹</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">传输方式</label>
+                        <select class="form-control" id="transport">
+                            <option value="webrtc">WebRTC</option>
+                            <option value="rtcpush">RTC推流</option>
+                            <option value="virtualcam">虚拟摄像头</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="updateConfig('transport')">应用</button>
+                        <div class="description">数据传输方式，影响延迟和兼容性</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">批次大小</label>
+                        <input type="number" class="form-control" id="batch_size" min="1" max="32" placeholder="16">
+                        <button class="btn btn-primary" onclick="updateConfig('batch_size')">应用</button>
+                        <div class="description">推理批次大小，越小延迟越低，越大效率越高</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- TTS配置 -->
+            <div class="config-section">
+                <div class="section-header" onclick="toggleSection(this)">
+                    <span>🎤 TTS语音配置</span>
+                    <span class="toggle-icon">▼</span>
+                </div>
+                <div class="section-content">
+                    <div class="form-group">
+                        <label class="form-label">TTS服务</label>
+                        <select class="form-control" id="tts">
+                            <option value="edgetts">Edge TTS</option>
+                            <option value="doubao">豆包TTS</option>
+                            <option value="xtts">XTTS</option>
+                            <option value="gpt-sovits">GPT-SoVITS</option>
+                            <option value="cosyvoice">CosyVoice</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="updateConfig('tts')">应用</button>
+                        <div class="description">文本转语音服务类型</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">参考文件</label>
+                        <input type="text" class="form-control" id="REF_FILE" placeholder="zh-CN-XiaoxiaoNeural">
+                        <button class="btn btn-primary" onclick="updateConfig('REF_FILE')">应用</button>
+                        <div class="description">TTS参考声音文件或声音名称</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">TTS服务器</label>
+                        <input type="text" class="form-control" id="TTS_SERVER" placeholder="http://127.0.0.1:9880">
+                        <button class="btn btn-primary" onclick="updateConfig('TTS_SERVER')">应用</button>
+                        <div class="description">TTS服务器地址</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- LLM配置 -->
+            <div class="config-section">
+                <div class="section-header" onclick="toggleSection(this)">
+                    <span>🤖 LLM大语言模型配置</span>
+                    <span class="toggle-icon">▼</span>
+                </div>
+                <div class="section-content">
+                    <div class="form-group">
+                        <label class="form-label">LLM提供商</label>
+                        <select class="form-control" id="llm_provider">
+                            <option value="dashscope">阿里云DashScope</option>
+                            <option value="ollama">Ollama本地</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="updateConfig('llm_provider')">应用</button>
+                        <div class="description">大语言模型服务提供商</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">模型名称</label>
+                        <input type="text" class="form-control" id="llm_model" placeholder="qwen-plus">
+                        <button class="btn btn-primary" onclick="updateConfig('llm_model')">应用</button>
+                        <div class="description">具体的模型名称</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">系统提示词</label>
+                        <textarea class="form-control" id="llm_system_prompt" rows="3" placeholder="你是一个友善的AI助手"></textarea>
+                        <button class="btn btn-primary" onclick="updateConfig('llm_system_prompt')">应用</button>
+                        <div class="description">定义AI助手的角色和行为</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Ollama服务器</label>
+                        <input type="text" class="form-control" id="ollama_host" placeholder="http://localhost:11434">
+                        <button class="btn btn-primary" onclick="updateConfig('ollama_host')">应用</button>
+                        <div class="description">Ollama服务器地址（仅Ollama模式需要）</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 高级配置 -->
+            <div class="config-section">
+                <div class="section-header" onclick="toggleSection(this)">
+                    <span>⚙️ 高级配置</span>
+                    <span class="toggle-icon">▼</span>
+                </div>
+                <div class="section-content">
+                    <div class="form-group">
+                        <label class="form-label">颜色匹配</label>
+                        <input type="checkbox" class="form-control" id="enable_color_matching">
+                        <button class="btn btn-primary" onclick="updateConfig('enable_color_matching')">应用</button>
+                        <div class="description">启用生成嘴唇与原始面部的颜色匹配</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">颜色匹配强度</label>
+                        <input type="range" class="form-control" id="color_matching_strength" min="0" max="1" step="0.1">
+                        <button class="btn btn-primary" onclick="updateConfig('color_matching_strength')">应用</button>
+                        <div class="description">颜色匹配强度（0.0-1.0）</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">监听端口</label>
+                        <input type="number" class="form-control" id="listenport" min="1000" max="65535" placeholder="8010">
+                        <button class="btn btn-warning" onclick="updateConfig('listenport')">重启生效</button>
+                        <div class="description">Web服务监听端口（需要重启服务）</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">最大会话数</label>
+                        <input type="number" class="form-control" id="max_session" min="1" max="10" placeholder="1">
+                        <button class="btn btn-warning" onclick="updateConfig('max_session')">重启生效</button>
+                        <div class="description">最大并发会话数量（需要重启服务）</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="actions">
+            <button class="btn btn-success" onclick="loadConfig()">🔄 刷新配置</button>
+            <button class="btn btn-primary" onclick="saveConfig()">💾 保存配置</button>
+            <button class="btn btn-warning" onclick="resetConfig()">🔄 重置默认</button>
+        </div>
+    </div>
+
+    <script>
+        let currentConfig = {};
+        
+        // 页面加载时获取配置
+        window.onload = function() {
+            loadConfig();
+            // 展开第一个配置区域
+            document.querySelector('.section-content').classList.add('active');
+        };
+        
+        // 切换配置区域
+        function toggleSection(header) {
+            const content = header.nextElementSibling;
+            const icon = header.querySelector('.toggle-icon');
+            
+            content.classList.toggle('active');
+            icon.classList.toggle('rotated');
+        }
+        
+        // 加载配置
+        async function loadConfig() {
+            try {
+                const response = await fetch('/get_config');
+                if (response.ok) {
+                    currentConfig = await response.json();
+                    updateUI(currentConfig);
+                    showStatus('配置加载成功', 'success');
+                } else {
+                    showStatus('加载配置失败', 'error');
+                }
+            } catch (error) {
+                showStatus('网络错误: ' + error.message, 'error');
+            }
+        }
+        
+        // 更新UI
+        function updateUI(config) {
+            for (const [key, value] of Object.entries(config)) {
+                const element = document.getElementById(key);
+                if (element) {
+                    if (element.type === 'checkbox') {
+                        element.checked = value;
+                    } else {
+                        element.value = value || '';
+                    }
+                }
+            }
+        }
+        
+        // 更新单个配置
+        async function updateConfig(key) {
+            const element = document.getElementById(key);
+            if (!element) return;
+            
+            let value = element.value;
+            if (element.type === 'checkbox') {
+                value = element.checked;
+            } else if (element.type === 'number' || element.type === 'range') {
+                value = parseFloat(value);
+            }
+            
+            try {
+                const response = await fetch('/update_config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        key: key,
+                        value: value
+                    })
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success) {
+                        element.classList.add('changed');
+                        setTimeout(() => element.classList.remove('changed'), 2000);
+                        showStatus(`${key} 更新成功`, 'success');
+                        currentConfig[key] = value;
+                    } else {
+                        showStatus(`更新失败: ${result.message}`, 'error');
+                    }
+                } else {
+                    showStatus('更新请求失败', 'error');
+                }
+            } catch (error) {
+                showStatus('网络错误: ' + error.message, 'error');
+            }
+        }
+        
+        // 保存配置
+        async function saveConfig() {
+            try {
+                const response = await fetch('/save_config', {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    showStatus('配置已保存到文件', 'success');
+                } else {
+                    showStatus('保存配置失败', 'error');
+                }
+            } catch (error) {
+                showStatus('网络错误: ' + error.message, 'error');
+            }
+        }
+        
+        // 重置配置
+        async function resetConfig() {
+            if (!confirm('确定要重置为默认配置吗？')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/reset_config', {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    showStatus('配置已重置', 'success');
+                    setTimeout(loadConfig, 1000);
+                } else {
+                    showStatus('重置配置失败', 'error');
+                }
+            } catch (error) {
+                showStatus('网络错误: ' + error.message, 'error');
+            }
+        }
+        
+        // 显示状态消息
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 3000);
+        }
+        
+        // 监听输入变化
+        document.addEventListener('input', function(e) {
+            if (e.target.classList.contains('form-control')) {
+                e.target.classList.remove('changed');
+            }
+        });
+    </script>
+</body>
+</html>

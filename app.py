@@ -37,12 +37,15 @@ from aiortc.rtcrtpsender import RTCRtpSender
 from webrtc import HumanPlayer
 from basereal import BaseReal
 from llm import llm_response
+from dynamic_config import dynamic_config, start_config_monitoring, get_config, set_config
+from config_callbacks import setup_config_callbacks
 
 import argparse
 import random
 import shutil
 import asyncio
 import torch
+import os
 from typing import Dict
 from logger import logger
 import gc
@@ -54,6 +57,33 @@ nerfreals:Dict[int, BaseReal] = {} #sessionid:BaseReal
 opt = None
 model = None
 avatar = None
+
+# 线程安全锁
+import threading
+nerfreals_lock = threading.Lock()
+
+def safe_get_nerfreal(sessionid):
+    """安全获取nerfreal对象"""
+    with nerfreals_lock:
+        return nerfreals.get(sessionid)
+
+def safe_set_nerfreal(sessionid, nerfreal):
+    """安全设置nerfreal对象"""
+    with nerfreals_lock:
+        nerfreals[sessionid] = nerfreal
+
+def safe_del_nerfreal(sessionid):
+    """安全删除nerfreal对象"""
+    with nerfreals_lock:
+        if sessionid in nerfreals:
+            del nerfreals[sessionid]
+            return True
+        return False
+
+def safe_check_nerfreal(sessionid):
+    """安全检查nerfreal对象是否存在"""
+    with nerfreals_lock:
+        return sessionid in nerfreals
         
 
 #####webrtc###############################
@@ -108,10 +138,10 @@ async def offer(request):
     #         ),
     #     )
     sessionid = randN(6) #len(nerfreals)
-    nerfreals[sessionid] = None
+    safe_set_nerfreal(sessionid, None)
     logger.info('sessionid=%d, session num=%d',sessionid,len(nerfreals))
     nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal,sessionid)
-    nerfreals[sessionid] = nerfreal
+    safe_set_nerfreal(sessionid, nerfreal)
     
     #ice_server = RTCIceServer(urls='stun:stun.l.google.com:19302')
     ice_server = RTCIceServer(urls='stun:stun.miwifi.com:3478')
@@ -124,10 +154,10 @@ async def offer(request):
         if pc.connectionState == "failed":
             await pc.close()
             pcs.discard(pc)
-            del nerfreals[sessionid]
+            safe_del_nerfreal(sessionid)
         if pc.connectionState == "closed":
             pcs.discard(pc)
-            del nerfreals[sessionid]
+            safe_del_nerfreal(sessionid)
             gc.collect()
 
     player = HumanPlayer(nerfreals[sessionid])
@@ -183,6 +213,14 @@ async def human(request):
         params = await request.json()
 
         sessionid = params.get('sessionid',0)
+        if sessionid not in nerfreals:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps(
+                    {"code": -1, "msg": f"Session {sessionid} not found"}
+                ),
+            )
+
         if params.get('interrupt'):
             nerfreals[sessionid].flush_talk()
 
@@ -233,6 +271,14 @@ async def interrupt_talk(request):
         params = await request.json()
 
         sessionid = params.get('sessionid',0)
+        if sessionid not in nerfreals:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps(
+                    {"code": -1, "msg": f"Session {sessionid} not found"}
+                ),
+            )
+        
         nerfreals[sessionid].flush_talk()
         
         return web.Response(
@@ -271,6 +317,14 @@ async def humanaudio(request):
     try:
         form= await request.post()
         sessionid = int(form.get('sessionid',0))
+        if sessionid not in nerfreals:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps(
+                    {"code": -1, "msg": f"Session {sessionid} not found"}
+                ),
+            )
+        
         fileobj = form["file"]
         filename=fileobj.filename
         filebytes=fileobj.file.read()
@@ -313,7 +367,15 @@ async def set_audiotype(request):
     try:
         params = await request.json()
 
-        sessionid = params.get('sessionid',0)    
+        sessionid = params.get('sessionid',0)
+        if sessionid not in nerfreals:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps(
+                    {"code": -1, "msg": f"Session {sessionid} not found"}
+                ),
+            )
+        
         nerfreals[sessionid].set_custom_state(params['audiotype'],params['reinit'])
 
         return web.Response(
@@ -347,8 +409,15 @@ async def set_custom_silent(request):
     try:
         params = await request.json()
         sessionid = params.get('sessionid', 0)
-        enabled = params.get('enabled', True)
+        if sessionid not in nerfreals:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps(
+                    {"code": -1, "msg": f"Session {sessionid} not found"}
+                ),
+            )
         
+        enabled = params.get('enabled', True)
         nerfreals[sessionid].set_use_custom_silent(enabled)
         
         return web.Response(
@@ -393,13 +462,20 @@ async def record(request):
     """
     try:
         params = await request.json()
-
         sessionid = params.get('sessionid',0)
-        if params['type']=='start_record':
-            # nerfreals[sessionid].put_msg_txt(params['text'])
-            nerfreals[sessionid].start_recording()
-        elif params['type']=='end_record':
+        if sessionid not in nerfreals:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps(
+                    {"code": -1, "msg": f"Session {sessionid} not found"}
+                ),
+            )
+        
+        if params['type'] == 'start_record':
+            nerfreals[sessionid].start_recording(params['path'])
+        elif params['type'] == 'stop_record':
             nerfreals[sessionid].stop_recording()
+
         return web.Response(
             content_type="application/json",
             text=json.dumps(
@@ -413,6 +489,118 @@ async def record(request):
             text=json.dumps(
                 {"code": -1, "msg": str(e)}
             ),
+        )
+
+async def get_config_api(request):
+    """
+    获取当前配置接口
+    
+    功能：返回当前所有配置参数
+    方法：GET
+    返回：
+        - 所有配置参数的JSON对象
+    """
+    try:
+        config = dynamic_config.get_all()
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps(config, ensure_ascii=False),
+        )
+    except Exception as e:
+        logger.exception('获取配置失败:')
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"error": str(e)}, ensure_ascii=False),
+            status=500
+        )
+
+async def update_config_api(request):
+    """
+    更新配置接口
+    
+    功能：动态更新单个配置参数
+    方法：POST
+    参数：
+        - key: 配置参数名
+        - value: 新的配置值
+    返回：
+        - success: 是否成功
+        - message: 状态消息
+    """
+    try:
+        params = await request.json()
+        key = params.get('key')
+        value = params.get('value')
+        
+        if not key:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({"success": False, "message": "缺少参数key"}, ensure_ascii=False),
+                status=400
+            )
+        
+        # 更新配置
+        set_config(key, value, save=True)
+        
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"success": True, "message": f"配置 {key} 已更新"}, ensure_ascii=False),
+        )
+    except Exception as e:
+        logger.exception('更新配置失败:')
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"success": False, "message": str(e)}, ensure_ascii=False),
+            status=500
+        )
+
+async def save_config_api(request):
+    """
+    保存配置到文件接口
+    
+    功能：将当前配置保存到配置文件
+    方法：POST
+    返回：
+        - success: 是否成功
+        - message: 状态消息
+    """
+    try:
+        dynamic_config.save_config()
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"success": True, "message": "配置已保存"}, ensure_ascii=False),
+        )
+    except Exception as e:
+        logger.exception('保存配置失败:')
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"success": False, "message": str(e)}, ensure_ascii=False),
+            status=500
+        )
+
+async def reset_config_api(request):
+    """
+    重置配置接口
+    
+    功能：重置为默认配置
+    方法：POST
+    返回：
+        - success: 是否成功
+        - message: 状态消息
+    """
+    try:
+        # 重新加载配置文件
+        dynamic_config.load_config()
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"success": True, "message": "配置已重置"}, ensure_ascii=False),
+        )
+    except Exception as e:
+        logger.exception('重置配置失败:')
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"success": False, "message": str(e)}, ensure_ascii=False),
+            status=500
         )
 
 async def is_speaking(request):
@@ -440,6 +628,15 @@ async def is_speaking(request):
     params = await request.json()
 
     sessionid = params.get('sessionid',0)
+    if sessionid not in nerfreals:
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "code": -1,
+                "msg": f"Session {sessionid} not found"
+            }),
+        )
+    
     nerfreal = nerfreals[sessionid]
     
     # 获取当前状态信息
@@ -549,8 +746,37 @@ if __name__ == '__main__':
 
     parser.add_argument('--max_session', type=int, default=1)  #multi session count
     parser.add_argument('--listenport', type=int, default=8010, help="web listen port")
+    
+    # 动态配置文件参数
+    parser.add_argument('--config_file', type=str, default='config.json', help="dynamic config file path")
 
     opt = parser.parse_args()
+    
+    # 初始化动态配置系统
+    dynamic_config.config_file = opt.config_file
+    
+    # 从配置文件加载参数（如果存在）
+    if os.path.exists(opt.config_file):
+        logger.info(f"从配置文件加载参数: {opt.config_file}")
+        config_data = dynamic_config.get_all()
+        
+        # 用配置文件的值覆盖命令行默认值（但不覆盖用户明确指定的参数）
+        for key, value in config_data.items():
+            if hasattr(opt, key) and value is not None:
+                # 只有当命令行参数是默认值时才覆盖
+                parser_default = parser.get_default(key)
+                current_value = getattr(opt, key)
+                if current_value == parser_default:
+                    setattr(opt, key, value)
+                    logger.info(f"从配置文件应用参数: {key} = {value}")
+    
+    # 启动配置文件监控
+    start_config_monitoring(interval=2.0)
+    
+    # 设置配置变化回调
+    setup_config_callbacks(opt, nerfreals)
+    
+    logger.info("动态配置系统已启动")
 
     # 智能配置调整
     if opt.auto_batch_size:
@@ -674,6 +900,13 @@ if __name__ == '__main__':
     # 对话控制接口
     appasync.router.add_post("/interrupt_talk", interrupt_talk)  # 打断数字人当前说话
     appasync.router.add_post("/is_speaking", is_speaking)  # 检查数字人是否正在说话
+    
+    # 配置管理接口
+    appasync.router.add_get("/get_config", get_config_api)  # 获取当前配置
+    appasync.router.add_post("/update_config", update_config_api)  # 更新配置参数
+    appasync.router.add_post("/save_config", save_config_api)  # 保存配置到文件
+    appasync.router.add_post("/reset_config", reset_config_api)  # 重置配置
+    
     appasync.router.add_static('/',path='web')
 
     # Configure default CORS settings.
