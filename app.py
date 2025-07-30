@@ -160,7 +160,13 @@ async def offer(request):
             safe_del_nerfreal(sessionid)
             gc.collect()
 
-    player = HumanPlayer(nerfreals[sessionid])
+    # 安全获取nerfreal对象
+    nerfreal_for_player = safe_get_nerfreal(sessionid)
+    if nerfreal_for_player is None:
+        logger.error(f"Failed to get nerfreal for session {sessionid}")
+        return web.Response(status=500, text="Internal server error")
+    
+    player = HumanPlayer(nerfreal_for_player)
     audio_sender = pc.addTrack(player.audio)
     video_sender = pc.addTrack(player.video)
     capabilities = RTCRtpSender.getCapabilities("video")
@@ -221,14 +227,26 @@ async def human(request):
                 ),
             )
 
-        if params.get('interrupt'):
-            nerfreals[sessionid].flush_talk()
+        # 使用锁保护访问
+        with nerfreals_lock:
+            if sessionid not in nerfreals:
+                return web.Response(
+                    content_type="application/json",
+                    text=json.dumps(
+                        {"code": -1, "msg": f"Session {sessionid} not found"}
+                    ),
+                )
+            
+            nerfreal = nerfreals[sessionid]
+            
+            if params.get('interrupt'):
+                nerfreal.flush_talk()
 
-        if params['type']=='echo':
-            nerfreals[sessionid].put_msg_txt(params['text'])
-        elif params['type']=='chat':
-            asyncio.get_event_loop().run_in_executor(None, llm_response, params['text'],nerfreals[sessionid])                         
-            #nerfreals[sessionid].put_msg_txt(res)
+            if params['type']=='echo':
+                nerfreal.put_msg_txt(params['text'])
+            elif params['type']=='chat':
+                asyncio.get_event_loop().run_in_executor(None, llm_response, params['text'], nerfreal)                         
+                #nerfreal.put_msg_txt(res)
 
         return web.Response(
             content_type="application/json",
@@ -271,15 +289,18 @@ async def interrupt_talk(request):
         params = await request.json()
 
         sessionid = params.get('sessionid',0)
-        if sessionid not in nerfreals:
-            return web.Response(
-                content_type="application/json",
-                text=json.dumps(
-                    {"code": -1, "msg": f"Session {sessionid} not found"}
-                ),
-            )
         
-        nerfreals[sessionid].flush_talk()
+        # 使用锁保护访问
+        with nerfreals_lock:
+            if sessionid not in nerfreals:
+                return web.Response(
+                    content_type="application/json",
+                    text=json.dumps(
+                        {"code": -1, "msg": f"Session {sessionid} not found"}
+                    ),
+                )
+            
+            nerfreals[sessionid].flush_talk()
         
         return web.Response(
             content_type="application/json",
@@ -317,18 +338,22 @@ async def humanaudio(request):
     try:
         form= await request.post()
         sessionid = int(form.get('sessionid',0))
-        if sessionid not in nerfreals:
-            return web.Response(
-                content_type="application/json",
-                text=json.dumps(
-                    {"code": -1, "msg": f"Session {sessionid} not found"}
-                ),
-            )
         
         fileobj = form["file"]
         filename=fileobj.filename
         filebytes=fileobj.file.read()
-        nerfreals[sessionid].put_audio_file(filebytes)
+        
+        # 使用锁保护访问
+        with nerfreals_lock:
+            if sessionid not in nerfreals:
+                return web.Response(
+                    content_type="application/json",
+                    text=json.dumps(
+                        {"code": -1, "msg": f"Session {sessionid} not found"}
+                    ),
+                )
+            
+            nerfreals[sessionid].put_audio_file(filebytes)
 
         return web.Response(
             content_type="application/json",
@@ -368,15 +393,18 @@ async def set_audiotype(request):
         params = await request.json()
 
         sessionid = params.get('sessionid',0)
-        if sessionid not in nerfreals:
-            return web.Response(
-                content_type="application/json",
-                text=json.dumps(
-                    {"code": -1, "msg": f"Session {sessionid} not found"}
-                ),
-            )
         
-        nerfreals[sessionid].set_custom_state(params['audiotype'],params['reinit'])
+        # 使用锁保护访问
+        with nerfreals_lock:
+            if sessionid not in nerfreals:
+                return web.Response(
+                    content_type="application/json",
+                    text=json.dumps(
+                        {"code": -1, "msg": f"Session {sessionid} not found"}
+                    ),
+                )
+            
+            nerfreals[sessionid].set_custom_state(params['audiotype'],params['reinit'])
 
         return web.Response(
             content_type="application/json",
@@ -409,16 +437,20 @@ async def set_custom_silent(request):
     try:
         params = await request.json()
         sessionid = params.get('sessionid', 0)
-        if sessionid not in nerfreals:
-            return web.Response(
-                content_type="application/json",
-                text=json.dumps(
-                    {"code": -1, "msg": f"Session {sessionid} not found"}
-                ),
-            )
         
         enabled = params.get('enabled', True)
-        nerfreals[sessionid].set_use_custom_silent(enabled)
+        
+        # 使用锁保护访问
+        with nerfreals_lock:
+            if sessionid not in nerfreals:
+                return web.Response(
+                    content_type="application/json",
+                    text=json.dumps(
+                        {"code": -1, "msg": f"Session {sessionid} not found"}
+                    ),
+                )
+            
+            nerfreals[sessionid].set_use_custom_silent(enabled)
         
         return web.Response(
             content_type="application/json",
@@ -463,18 +495,21 @@ async def record(request):
     try:
         params = await request.json()
         sessionid = params.get('sessionid',0)
-        if sessionid not in nerfreals:
-            return web.Response(
-                content_type="application/json",
-                text=json.dumps(
-                    {"code": -1, "msg": f"Session {sessionid} not found"}
-                ),
-            )
         
-        if params['type'] == 'start_record':
-            nerfreals[sessionid].start_recording(params['path'])
-        elif params['type'] == 'stop_record':
-            nerfreals[sessionid].stop_recording()
+        # 使用锁保护访问
+        with nerfreals_lock:
+            if sessionid not in nerfreals:
+                return web.Response(
+                    content_type="application/json",
+                    text=json.dumps(
+                        {"code": -1, "msg": f"Session {sessionid} not found"}
+                    ),
+                )
+            
+            if params['type'] == 'start_record':
+                nerfreals[sessionid].start_recording(params['path'])
+            elif params['type'] == 'stop_record':
+                nerfreals[sessionid].stop_recording()
 
         return web.Response(
             content_type="application/json",
@@ -628,16 +663,19 @@ async def is_speaking(request):
     params = await request.json()
 
     sessionid = params.get('sessionid',0)
-    if sessionid not in nerfreals:
-        return web.Response(
-            content_type="application/json",
-            text=json.dumps({
-                "code": -1,
-                "msg": f"Session {sessionid} not found"
-            }),
-        )
     
-    nerfreal = nerfreals[sessionid]
+    # 使用锁保护访问
+    with nerfreals_lock:
+        if sessionid not in nerfreals:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({
+                    "code": -1,
+                    "msg": f"Session {sessionid} not found"
+                }),
+            )
+        
+        nerfreal = nerfreals[sessionid]
     
     # 获取当前状态信息
     is_speaking = nerfreal.is_speaking()
@@ -684,7 +722,7 @@ async def run(push_url,sessionid):
             await pc.close()
             pcs.discard(pc)
 
-    player = HumanPlayer(nerfreals[sessionid])
+    player = HumanPlayer(nerfreal)
     audio_sender = pc.addTrack(player.audio)
     video_sender = pc.addTrack(player.video)
 
@@ -878,8 +916,9 @@ if __name__ == '__main__':
     #     rendthrd.start()
     if opt.transport=='virtualcam':
         thread_quit = Event()
-        nerfreals[0] = build_nerfreal(0)
-        rendthrd = Thread(target=nerfreals[0].render,args=(thread_quit,))
+        nerfreal = build_nerfreal(0)
+        safe_set_nerfreal(0, nerfreal)
+        rendthrd = Thread(target=nerfreal.render,args=(thread_quit,))
         rendthrd.start()
 
     #############################################################################
