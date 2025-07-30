@@ -19,3 +19,4 @@ workspace/log_ngp.txt
 
 *.log
 dist
+.vscode/settings.json
