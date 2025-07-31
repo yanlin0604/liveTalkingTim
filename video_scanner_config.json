@@ -1,0 +1,33 @@
+{
+  "scan_directory": "videos",
+  "avatar_base_dir": "E://xxxxxx//bot//LiveTalking//data//avatars",
+  "scan_interval": 60,
+  "video_extensions": [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv"],
+  "genavatar_script": "wav2lip/genavatar.py",
+  "genavatar_options": {
+    "img_size": 384,
+    "batch_frames": 150,
+    "use_video2imgs": false,
+    "nosmooth": false,
+    "pads": [0, 10, 0, 0],
+    "face_det_batch_size": 6,
+    "resize_factor": 1.0,
+    "force_cpu": false
+  },
+  "logging": {
+    "level": "INFO",
+    "log_file": "video_scanner.log",
+    "max_log_size": "10MB",
+    "backup_count": 5
+  },
+  "notifications": {
+    "enable_email": false,
+    "email_settings": {
+      "smtp_server": "smtp.gmail.com",
+      "smtp_port": 587,
+      "username": "",
+      "password": "",
+      "to_email": ""
+    }
+  }
+} 
