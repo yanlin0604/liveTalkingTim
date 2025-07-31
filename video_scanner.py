@@ -34,6 +34,7 @@ class VideoScanner:
                  avatar_base_dir: str = "data/avatars",
                  scan_interval: int = 60,
                  video_extensions: List[str] = None,
+                 video_prefix: str = None,
                  genavatar_script: str = "wav2lip/genavatar.py",
                  genavatar_options: Dict = None,
                  config_file: str = None):
@@ -41,19 +42,11 @@ class VideoScanner:
         初始化视频扫描器
         
         Args:
-            scan_directory: 
-            
-
-
-
-
-
-
-
-            
+            scan_directory: 扫描目录
             avatar_base_dir: 头像数据存储目录
             scan_interval: 扫描间隔（秒）
             video_extensions: 视频文件扩展名列表
+            video_prefix: 视频文件名称前缀，只处理以此前缀开头的文件
             genavatar_script: genavatar.py脚本路径
             genavatar_options: genavatar.py的额外选项
             config_file: 配置文件路径
@@ -69,6 +62,7 @@ class VideoScanner:
         self.avatar_base_dir = Path(avatar_base_dir or self.config.get('avatar_base_dir', 'data/avatars'))
         self.scan_interval = scan_interval or self.config.get('scan_interval', 60)
         self.video_extensions = video_extensions or self.config.get('video_extensions', ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv'])
+        self.video_prefix = video_prefix or self.config.get('video_prefix', None)
         self.genavatar_script = Path(genavatar_script or self.config.get('genavatar_script', 'wav2lip/genavatar.py'))
         self.genavatar_options = genavatar_options or self.config.get('genavatar_options', {})
         
@@ -89,6 +83,7 @@ class VideoScanner:
         logger.info(f"头像目录: {self.avatar_base_dir}")
         logger.info(f"扫描间隔: {self.scan_interval}秒")
         logger.info(f"视频扩展名: {self.video_extensions}")
+        logger.info(f"视频前缀过滤: {self.video_prefix or '无'}")
         logger.info(f"genavatar选项: {self.genavatar_options}")
     
     def load_config(self, config_file: str):
@@ -288,6 +283,12 @@ class VideoScanner:
                 video_files.extend(self.scan_directory.glob(f"*{ext}"))
                 video_files.extend(self.scan_directory.glob(f"*{ext.upper()}"))
             
+            # 应用前缀过滤
+            if self.video_prefix:
+                original_count = len(video_files)
+                video_files = [f for f in video_files if f.name.startswith(self.video_prefix)]
+                logger.info(f"前缀过滤: 从 {original_count} 个文件中筛选出 {len(video_files)} 个符合前缀 '{self.video_prefix}' 的文件")
+            
             logger.info(f"找到 {len(video_files)} 个视频文件")
             
             # 检查每个视频文件
@@ -371,6 +372,8 @@ def main():
                        help='只执行一次扫描，不持续运行')
     parser.add_argument('--extensions', nargs='+', 
                        help='视频文件扩展名')
+    parser.add_argument('--prefix', type=str,
+                       help='视频文件名称前缀，只处理以此前缀开头的文件')
     parser.add_argument('--genavatar_script', type=str,
                        help='genavatar.py脚本路径')
     parser.add_argument('--config', type=str, default='video_scanner_config.json',
@@ -384,6 +387,7 @@ def main():
         avatar_base_dir=args.avatar_dir,
         scan_interval=args.interval,
         video_extensions=args.extensions,
+        video_prefix=args.prefix,
         genavatar_script=args.genavatar_script,
         config_file=args.config
     )

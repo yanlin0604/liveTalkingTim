@@ -1,0 +1,12 @@
+{
+  "scan_directory": "C:\\Users\\Administrator\\Videos",
+  "action_base_dir": "data/customvideo",
+  "scan_interval": 60,
+  "video_extensions": [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv"],
+  "video_prefix": "action_",
+  "genaction_script": "wav2lip/genaction.py",
+  "genaction_options": {
+    "resize_factor": 1.0,
+    "batch_frames": 150
+  }
+} 

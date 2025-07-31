@@ -103,7 +103,8 @@ class BaseReal:
         self.custom_audio_index = {}  # 自定义音频索引
         self.custom_index = {}  # 自定义索引
         self.custom_opt = {}  # 自定义选项
-        self.use_custom_silent = True  # 静音时是否使用自定义动作的开关
+        # 从配置文件读取自定义动作开关设置
+        self.use_custom_silent = getattr(opt, 'use_custom_silent', True)
         self.__loadcustom()
 
     def put_msg_txt(self,msg,eventpoint=None):
@@ -150,11 +151,12 @@ class BaseReal:
             logger.info(item)
             input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
             input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-            self.custom_img_cycle[item['audiotype']] = read_imgs(input_img_list)
-            self.custom_audio_cycle[item['audiotype']], sample_rate = sf.read(item['audiopath'], dtype='float32')
-            self.custom_audio_index[item['audiotype']] = 0
-            self.custom_index[item['audiotype']] = 0
-            self.custom_opt[item['audiotype']] = item
+            audiotype = item['audiotype']
+            self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
+            self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
+            self.custom_audio_index[audiotype] = 0
+            self.custom_index[audiotype] = 0
+            self.custom_opt[audiotype] = item
 
     def init_customindex(self):
         self.curr_state=0
@@ -171,10 +173,12 @@ class BaseReal:
         if self.recording:
             return
 
-        # 直接设置码率和质量参数 (优化稳定性)
-        bitrate = '1500k'      # 提高基础码率确保质量
-        crf = 23              # 使用更高质量的CRF值
-        preset = 'medium'     # 使用medium获得更好的质量稳定性
+        # 优化编码参数以提高视频质量稳定性
+        bitrate = '2000k'      # 提高基础码率确保质量
+        crf = 20              # 使用更高质量的CRF值（18-23为高质量范围）
+        preset = 'slow'       # 使用slow获得更好的质量稳定性
+        maxrate = '3000k'     # 设置更高的最大码率上限
+        bufsize = '6000k'     # 增大缓冲区确保稳定性
 
         command = ['ffmpeg',
                     '-y', '-an',
@@ -188,14 +192,16 @@ class BaseReal:
                     '-vcodec', "h264",
                     '-crf', str(crf),  # 优先使用CRF恒定质量模式
                     '-b:v', bitrate,  # 设置视频码率作为参考
-                    '-maxrate', '2000k',  # 设置更高的最大码率上限
-                    '-bufsize', '4000k',  # 增大缓冲区确保稳定性
+                    '-maxrate', maxrate,  # 设置更高的最大码率上限
+                    '-bufsize', bufsize,  # 增大缓冲区确保稳定性
                     '-preset', preset,  # 编码速度预设
                     '-profile:v', 'high',  # 使用高质量配置
                     '-level', '4.1',  # H.264标准
                     '-g', '50',  # 关键帧间隔，确保质量稳定
                     '-keyint_min', '25',  # 最小关键帧间隔
                     '-sc_threshold', '0',  # 禁用场景切换检测，保持稳定
+                    '-tune', 'zerolatency',  # 优化低延迟
+                    '-x264opts', 'no-scenecut=1:keyint=50:min-keyint=25',  # 强制关键帧间隔
                     f'temp{self.opt.sessionid}.mp4']
         self._record_video_pipe = subprocess.Popen(command, shell=False, stdin=subprocess.PIPE)
 
@@ -311,9 +317,10 @@ class BaseReal:
 
     def get_default_silent_audiotype(self):
         """获取静音时的默认动作类型"""
-        # 如果开关开启且配置了audiotype=2，则使用自定义动作
-        if self.use_custom_silent and self.custom_index.get(2) is not None:
-            return 2
+        # 如果开关开启，查找第一个可用的自定义动作
+        if self.use_custom_silent and self.custom_index:
+            # 返回第一个可用的audiotype
+            return list(self.custom_index.keys())[0]
         # 否则返回1（静音状态）
         return 1
 

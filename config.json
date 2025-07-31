@@ -25,6 +25,7 @@
 
   "// 自定义视频配置": "Custom Video Configuration",
   "customvideo_config": "data/custom_config.json",
+  "use_custom_silent": true,
 
   "// TTS语音合成配置": "Text-to-Speech Configuration",
   "tts": "doubao",
@@ -56,6 +57,7 @@
     "enable_color_matching": "启用生成嘴唇与原始面部的颜色匹配",
     "color_matching_strength": "颜色匹配强度（0.0-1.0，越高校正越强）",
     "customvideo_config": "自定义动作JSON配置文件路径",
+    "use_custom_silent": "静音时是否自动使用自定义动作（true=开启，false=关闭）",
     "tts": "TTS服务类型（edgetts/xtts/gpt-sovits/cosyvoice）",
     "REF_FILE": "TTS参考文件或声音名称",
     "REF_TEXT": "TTS参考文本",

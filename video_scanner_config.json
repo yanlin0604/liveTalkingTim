@@ -3,6 +3,7 @@
   "avatar_base_dir": "E://xxxxxx//bot//LiveTalking//data//avatars",
   "scan_interval": 60,
   "video_extensions": [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv"],
+  "video_prefix": "avatar_",
   "genavatar_script": "wav2lip/genavatar.py",
   "genavatar_options": {
     "img_size": 384,

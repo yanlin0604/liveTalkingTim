@@ -401,14 +401,14 @@
                             <div class="row">
                                 <div class="col-12 mb-3">
                                     <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" id="auto-silent-custom" checked>
+                                        <input class="form-check-input" type="checkbox" id="auto-silent-custom">
                                         <label class="form-check-label" for="auto-silent-custom">
-                                            <i class="bi bi-person-video2"></i> 静音时自动使用自定义动作 (audiotype=2)
+                                            <i class="bi bi-person-video2"></i> 静音时自动使用自定义动作
                                         </label>
                                     </div>
                                     <small class="text-muted">
                                         <i class="bi bi-info-circle"></i> 
-                                        开启后，当数字人不说话时会自动使用custom_config.json中audiotype=2的配置
+                                        开启后，当数字人不说话时会自动使用第一个可用的自定义动作配置
                                     </small>
                                 </div>
                             </div>
@@ -943,9 +943,9 @@
                     $indicator.removeClass('speaking').addClass('silent');
                     $indicator.html('<i class="bi bi-person-video2"></i>');
                     
-                    // 显示当前使用的audiotype
-                    const audiotypeText = currentAudiotype !== null ? currentAudiotype : defaultSilentAudiotype;
-                    $text.text(`静音中 (使用audiotype=${audiotypeText})`);
+                            // 显示当前使用的audiotype
+        const audiotypeText = currentAudiotype !== null ? currentAudiotype : defaultSilentAudiotype;
+        $text.text(`静音中 (使用动作: ${audiotypeText})`);
                     
                     // 不禁用打断按钮，因为可能有队列中的消息
                 }
@@ -1025,16 +1025,29 @@
                 addChatMessage('连接成功！', 'system');
                 
                 if ($('#auto-silent-custom').is(':checked')) {
-                    addChatMessage('✅ 静音时将自动使用audiotype=2的自定义动作', 'system');
+                    addChatMessage('✅ 静音时将自动使用自定义动作', 'system');
                 }
             }
 
             // 页面加载时显示配置信息
             $(document).ready(function() {
-                // 显示欢迎信息
-                setTimeout(function() {
-                    addChatMessage('💡 静音时自动使用自定义动作功能已就绪', 'system');
-                }, 1000);
+                // 从配置文件获取默认设置
+                fetch('/get_config_for_frontend')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.code === 0) {
+                            // 根据配置文件设置复选框状态
+                            $('#auto-silent-custom').prop('checked', data.data.use_custom_silent);
+                            
+                            // 显示配置信息
+                            const status = data.data.use_custom_silent ? '已开启' : '已关闭';
+                            addChatMessage(`💡 静音时自动使用自定义动作功能: ${status}`, 'system');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('获取配置失败:', error);
+                        addChatMessage('💡 静音时自动使用自定义动作功能已就绪', 'system');
+                    });
             });
         });
     </script>

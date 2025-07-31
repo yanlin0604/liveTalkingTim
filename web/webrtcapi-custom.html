@@ -47,7 +47,9 @@
     <video id="video" style="width:600px;" autoplay="true" playsinline="true"></video>
 </div>
 <button id="custom" onclick="custom()">切换视频</button>
-<input type="text" id="audiotype" value="0">
+    <select id="audiotype">
+        <option value="">请选择动作类型</option>
+    </select>
 
 <script src="client.js"></script>
 <script type="text/javascript" src="http://cdn.sockjs.org/sockjs-0.3.4.js"></script>
@@ -55,9 +57,15 @@
 </body>
 <script type="text/javascript" charset="utf-8">
   function custom() {
+      const audiotype = document.getElementById('audiotype').value;
+      if (!audiotype) {
+          alert('请选择动作类型');
+          return;
+      }
+      
       fetch('/set_audiotype', {
             body: JSON.stringify({
-                audiotype: parseInt(document.getElementById('audiotype').value),
+                audiotype: audiotype,
                 reinit: false,
                 sessionid:parseInt(document.getElementById('sessionid').value),
             }),
@@ -68,7 +76,32 @@
       });
     }
     
+    // 加载可用的动作类型
+    function loadAvailableAudiotypes() {
+        fetch('/is_speaking?sessionid=' + document.getElementById('sessionid').value)
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0 && data.data.available_audiotypes) {
+                    const select = document.getElementById('audiotype');
+                    select.innerHTML = '<option value="">请选择动作类型</option>';
+                    
+                    data.data.available_audiotypes.forEach(audiotype => {
+                        const option = document.createElement('option');
+                        option.value = audiotype;
+                        option.textContent = audiotype;
+                        select.appendChild(option);
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('加载动作类型失败:', error);
+            });
+    }
+    
 	$(document).ready(function() {
+	  // 页面加载时获取可用的动作类型
+	  loadAvailableAudiotypes();
+	  
 	  // var host = window.location.hostname
 	  // var ws = new WebSocket("ws://"+host+":8000/humanecho");
 	  // //document.getElementsByTagName("video")[0].setAttribute("src", aa["video"]);

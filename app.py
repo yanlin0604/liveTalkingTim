@@ -46,6 +46,7 @@ import shutil
 import asyncio
 import torch
 import os
+import glob
 from typing import Dict
 from logger import logger
 import gc
@@ -378,7 +379,7 @@ async def set_audiotype(request):
     方法：POST
     参数：
         - sessionid: 会话ID（可选，默认0）
-        - audiotype: 音频类型标识
+        - audiotype: 音频类型标识（可以是数字或字符串，对应custom_config.json中的audiotype）
         - reinit: 是否重新初始化（布尔值）
     返回：
         - code: 状态码（0=成功，-1=失败）
@@ -393,6 +394,7 @@ async def set_audiotype(request):
         params = await request.json()
 
         sessionid = params.get('sessionid',0)
+        audiotype = params.get('audiotype')
         
         # 使用锁保护访问
         with nerfreals_lock:
@@ -404,7 +406,17 @@ async def set_audiotype(request):
                     ),
                 )
             
-            nerfreals[sessionid].set_custom_state(params['audiotype'],params['reinit'])
+            # 检查audiotype是否有效
+            nerfreal = nerfreals[sessionid]
+            if audiotype not in nerfreal.custom_index:
+                return web.Response(
+                    content_type="application/json",
+                    text=json.dumps(
+                        {"code": -1, "msg": f"Audiotype '{audiotype}' not found in custom_config.json"}
+                    ),
+                )
+            
+            nerfreal.set_custom_state(audiotype, params.get('reinit', True))
 
         return web.Response(
             content_type="application/json",
@@ -680,6 +692,10 @@ async def is_speaking(request):
     # 获取当前状态信息
     is_speaking = nerfreal.is_speaking()
     current_audiotype = getattr(nerfreal, '_last_silent_audiotype', None) if not is_speaking else None
+    default_silent_audiotype = nerfreal.get_default_silent_audiotype()
+    
+    # 获取可用的audiotype列表
+    available_audiotypes = list(nerfreal.custom_index.keys()) if hasattr(nerfreal, 'custom_index') else []
     
     return web.Response(
         content_type="application/json",
@@ -688,10 +704,226 @@ async def is_speaking(request):
             "data": {
                 "is_speaking": is_speaking,
                 "current_audiotype": current_audiotype,
-                "default_silent_audiotype": nerfreal.get_default_silent_audiotype()
+                "default_silent_audiotype": default_silent_audiotype,
+                "available_audiotypes": available_audiotypes
             }
         }),
     )
+
+async def get_config_for_frontend(request):
+    """
+    获取前端需要的配置信息接口
+
+    功能：返回前端页面需要的配置信息
+    方法：GET
+    返回：
+        - code: 状态码（0=成功）
+        - data: 配置信息，包含：
+            * use_custom_silent: 是否默认开启自定义动作
+
+    使用场景：
+        - 前端页面初始化时获取配置
+        - 动态更新前端界面状态
+    """
+    try:
+        # 从配置文件中读取设置
+        config_path = "config.json"
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
+            use_custom_silent = config_data.get('use_custom_silent', True)
+        else:
+            use_custom_silent = True  # 默认值
+        
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "code": 0,
+                "data": {
+                    "use_custom_silent": use_custom_silent
+                }
+            }),
+        )
+        
+    except Exception as e:
+        logger.exception('获取前端配置失败:')
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "code": -1,
+                "msg": str(e)
+            }),
+        )
+
+async def get_actions(request):
+    """
+    获取可用动作列表接口
+
+    功能：扫描data/customvideo目录，返回所有可用的动作名称
+    方法：GET
+    返回：
+        - code: 状态码（0=成功）
+        - data: 动作列表，每个动作包含：
+            * name: 动作目录名称
+            * description: 动作描述（来自custom_config.json）
+            * created_time: 创建时间
+
+    使用场景：
+        - 前端动作选择界面
+        - 动态加载可用动作
+        - 动作管理功能
+    """
+    try:
+        custom_config_path = "data/custom_config.json"
+        actions_list = []
+        
+        # 检查custom_config.json是否存在
+        if not os.path.exists(custom_config_path):
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({
+                    "code": -1,
+                    "msg": f"Custom config file not found: {custom_config_path}"
+                }),
+            )
+        
+        # 读取custom_config.json
+        with open(custom_config_path, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+        
+        # 构建动作列表
+        for item in config_data:
+            action_info = {
+                "name": item.get('audiotype', ''),
+                "description": item.get('description', ''),
+                "created_time": item.get('created_time', ''),
+                "imgpath": item.get('imgpath', ''),
+                "audiopath": item.get('audiopath', '')
+            }
+            actions_list.append(action_info)
+        
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "code": 0,
+                "data": actions_list
+            }),
+        )
+        
+    except Exception as e:
+        logger.exception('获取动作列表失败:')
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "code": -1,
+                "msg": str(e)
+            }),
+        )
+
+async def get_avatars(request):
+    """
+    获取可用头像列表接口
+
+    功能：扫描data/avatars目录，返回所有可用的头像名称和预览图
+    方法：GET
+    返回：
+        - code: 状态码（0=成功）
+        - data: 头像列表，每个头像包含：
+            * name: 头像目录名称
+            * preview_image: 预览图片路径（full_imgs目录中的第一张图片）
+
+    使用场景：
+        - 前端头像选择界面
+        - 动态加载可用头像
+        - 头像管理功能
+
+    示例响应：
+        {
+            "code": 0,
+            "data": [
+                {
+                    "name": "wav2lip_111m",
+                    "preview_image": "data/avatars/wav2lip_111m/full_imgs/00000021.png"
+                },
+                {
+                    "name": "wav2lip_110m", 
+                    "preview_image": "data/avatars/wav2lip_110m/full_imgs/00000021.png"
+                }
+            ]
+        }
+    """
+    try:
+        avatars_dir = "data/avatars"
+        avatars_list = []
+        
+        # 检查avatars目录是否存在
+        if not os.path.exists(avatars_dir):
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({
+                    "code": -1,
+                    "msg": f"Avatars directory not found: {avatars_dir}"
+                }),
+            )
+        
+        # 扫描avatars目录下的所有子目录
+        for item in os.listdir(avatars_dir):
+            item_path = os.path.join(avatars_dir, item)
+            
+            # 只处理目录，跳过文件
+            if not os.path.isdir(item_path):
+                continue
+                
+            # 跳过特殊目录
+            if item.startswith('.') or item == '__MACOSX':
+                continue
+            
+            # 检查是否有full_imgs目录
+            full_imgs_path = os.path.join(item_path, "full_imgs")
+            if not os.path.exists(full_imgs_path):
+                continue
+            
+            # 查找full_imgs目录中的第一张图片作为预览图
+            image_files = glob.glob(os.path.join(full_imgs_path, "*.png"))
+            if not image_files:
+                # 如果没有PNG文件，尝试其他图片格式
+                image_files = glob.glob(os.path.join(full_imgs_path, "*.jpg")) + \
+                             glob.glob(os.path.join(full_imgs_path, "*.jpeg"))
+            
+            if image_files:
+                # 按文件名排序，选择第一张图片
+                image_files.sort()
+                preview_image = image_files[0]
+                
+                # 转换为相对路径
+                preview_image = os.path.relpath(preview_image, ".")
+                
+                avatars_list.append({
+                    "name": item,
+                    "preview_image": preview_image
+                })
+        
+        # 按名称排序
+        avatars_list.sort(key=lambda x: x["name"])
+        
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "code": 0,
+                "data": avatars_list
+            }, ensure_ascii=False),
+        )
+        
+    except Exception as e:
+        logger.exception('获取头像列表失败:')
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "code": -1,
+                "msg": str(e)
+            }, ensure_ascii=False),
+            status=500
+        )
 
 
 async def on_shutdown(app):
@@ -939,6 +1171,11 @@ if __name__ == '__main__':
     # 对话控制接口
     appasync.router.add_post("/interrupt_talk", interrupt_talk)  # 打断数字人当前说话
     appasync.router.add_post("/is_speaking", is_speaking)  # 检查数字人是否正在说话
+    
+    # 头像管理接口
+    appasync.router.add_get("/get_avatars", get_avatars)  # 获取可用头像列表
+    appasync.router.add_get("/get_actions", get_actions)  # 获取可用动作列表
+    appasync.router.add_get("/get_config_for_frontend", get_config_for_frontend)  # 获取前端配置
     
     # 配置管理接口
     appasync.router.add_get("/get_config", get_config_api)  # 获取当前配置
