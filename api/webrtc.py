@@ -164,16 +164,104 @@ class WebRTCAPI:
         player = HumanPlayer(nerfreal_for_player)
         audio_sender = pc.addTrack(player.audio)
         video_sender = pc.addTrack(player.video)
+        
+        # 获取流质量配置
+        streaming_config = getattr(nerfreal_for_player, 'streaming_quality', {})
+        max_bitrate = streaming_config.get('max_bitrate', 1500000)  # 降低到1.5Mbps
+        min_bitrate = streaming_config.get('min_bitrate', 300000)   # 降低到300kbps
+        start_bitrate = streaming_config.get('start_bitrate', 800000)  # 降低到800kbps
+        audio_max_bitrate = streaming_config.get('audio_max_bitrate', 128000)  # 128kbps
+        audio_min_bitrate = streaming_config.get('audio_min_bitrate', 64000)   # 64kbps
+        
+        # 设置视频码率控制 - 仅使用SDP方式
+        try:
+            logger.info(f"=== WebRTC码率配置 ===")
+            logger.info(f"视频码率范围: {min_bitrate/1000:.0f}k - {max_bitrate/1000:.0f}k")
+            logger.info(f"音频码率范围: {audio_min_bitrate/1000:.0f}k - {audio_max_bitrate/1000:.0f}k")
+            logger.info(f"目标帧率: {streaming_config.get('target_fps', 25)} fps")
+            logger.info(f"起始码率: {start_bitrate/1000:.0f}k")
+            logger.info("使用SDP方式设置码率（兼容性最佳）")
+            
+        except Exception as e:
+            logger.warning(f"设置WebRTC码率失败: {e}")
+            logger.info("将使用默认码率设置")
+        
         capabilities = RTCRtpSender.getCapabilities("video")
         preferences = list(filter(lambda x: x.name == "H264", capabilities.codecs))
         preferences += list(filter(lambda x: x.name == "VP8", capabilities.codecs))
         preferences += list(filter(lambda x: x.name == "rtx", capabilities.codecs))
         transceiver = pc.getTransceivers()[1]
         transceiver.setCodecPreferences(preferences)
+        
+        # 设置编码参数以符合H.264 Level 3.1限制
+        try:
+            # 设置最大分辨率限制（符合Level 3.1）
+            max_width = 1280
+            max_height = 720
+            max_fps = 30
+            
+            # 设置编码参数
+            sender = video_sender
+            if hasattr(sender, 'setParameters'):
+                params = sender.getParameters()
+                if params.encodings:
+                    # 设置编码参数
+                    params.encodings[0].maxBitrate = max_bitrate
+                    params.encodings[0].minBitrate = min_bitrate
+                    params.encodings[0].maxFramerate = max_fps
+                    sender.setParameters(params)
+                    logger.info(f"✅ 设置编码参数: 最大码率={max_bitrate/1000:.0f}k, 最大帧率={max_fps}")
+        except Exception as e:
+            logger.warning(f"设置编码参数失败: {e}")
 
         await pc.setRemoteDescription(offer)
 
         answer = await pc.createAnswer()
+        
+        # 在SDP中添加码率限制 - 改进版本
+        try:
+            sdp_lines = answer.sdp.split('\n')
+            modified_sdp_lines = []
+            video_bitrate_added = False
+            audio_bitrate_added = False
+            
+            for i, line in enumerate(sdp_lines):
+                modified_sdp_lines.append(line)
+                
+                # 在视频媒体行后添加码率限制
+                if line.startswith('m=video') and not video_bitrate_added:
+                    # 查找视频媒体段的结束位置
+                    j = i + 1
+                    while j < len(sdp_lines) and not sdp_lines[j].startswith('m='):
+                        j += 1
+                    
+                    # 在视频媒体段末尾添加码率设置
+                    if j < len(sdp_lines):
+                        modified_sdp_lines.insert(j, f'b=AS:{max_bitrate // 1000}')
+                        modified_sdp_lines.insert(j + 1, f'b=TIAS:{max_bitrate}')
+                        logger.info(f"✅ 在SDP中添加视频码率限制: {max_bitrate // 1000}k")
+                        video_bitrate_added = True
+                
+                # 在音频媒体行后添加码率限制
+                if line.startswith('m=audio') and not audio_bitrate_added:
+                    # 查找音频媒体段的结束位置
+                    j = i + 1
+                    while j < len(sdp_lines) and not sdp_lines[j].startswith('m='):
+                        j += 1
+                    
+                    # 在音频媒体段末尾添加码率设置
+                    if j < len(sdp_lines):
+                        modified_sdp_lines.insert(j, f'b=AS:{audio_max_bitrate // 1000}')
+                        modified_sdp_lines.insert(j + 1, f'b=TIAS:{audio_max_bitrate}')
+                        logger.info(f"✅ 在SDP中添加音频码率限制: {audio_max_bitrate // 1000}k")
+                        audio_bitrate_added = True
+            
+            modified_sdp = '\n'.join(modified_sdp_lines)
+            answer = RTCSessionDescription(sdp=modified_sdp, type=answer.type)
+            logger.info("✅ SDP码率参数设置成功")
+        except Exception as e:
+            logger.warning(f"SDP码率设置失败: {e}")
+        
         await pc.setLocalDescription(answer)
 
         return web.Response(

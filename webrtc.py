@@ -45,6 +45,67 @@ logger = logging.getLogger(__name__)
 from logger import logger as mylogger
 
 
+class BitrateMonitor:
+    """码率监控和自适应调整类"""
+    
+    def __init__(self, config=None):
+        self.config = config or {}
+        self.max_bitrate = self.config.get('max_bitrate', 2000000)
+        self.min_bitrate = self.config.get('min_bitrate', 500000)
+        self.current_bitrate = self.config.get('start_bitrate', 1000000)
+        self.bitrate_history = []
+        self.fps_history = []
+        self.last_adjustment = time.time()
+        self.adjustment_interval = 10  # 10秒调整一次
+        
+    def update_metrics(self, fps, queue_size):
+        """更新性能指标"""
+        current_time = time.time()
+        self.fps_history.append(fps)
+        self.bitrate_history.append(self.current_bitrate)
+        
+        # 保持历史记录在合理范围内
+        if len(self.fps_history) > 10:
+            self.fps_history.pop(0)
+        if len(self.bitrate_history) > 10:
+            self.bitrate_history.pop(0)
+            
+        # 检查是否需要调整码率
+        if current_time - self.last_adjustment > self.adjustment_interval:
+            self._adjust_bitrate()
+            self.last_adjustment = current_time
+    
+    def _adjust_bitrate(self):
+        """自适应调整码率"""
+        if len(self.fps_history) < 3:
+            return
+            
+        avg_fps = sum(self.fps_history) / len(self.fps_history)
+        target_fps = self.config.get('target_fps', 25)
+        
+        mylogger.info(f"=== 码率自适应调整 ===")
+        mylogger.info(f"历史帧率: {[f'{fps:.1f}' for fps in self.fps_history[-3:]]}")
+        mylogger.info(f"平均帧率: {avg_fps:.1f} fps")
+        mylogger.info(f"目标帧率: {target_fps} fps")
+        mylogger.info(f"当前码率: {self.current_bitrate/1000:.0f}kbps")
+        
+        # 根据帧率调整码率
+        if avg_fps < target_fps * 0.8:  # 帧率过低，降低码率
+            new_bitrate = max(self.min_bitrate, self.current_bitrate * 0.8)
+            mylogger.info(f"帧率过低({avg_fps:.1f}fps < {target_fps*0.8:.1f}fps)，降低码率: {self.current_bitrate/1000:.0f}k -> {new_bitrate/1000:.0f}k")
+            self.current_bitrate = new_bitrate
+        elif avg_fps > target_fps * 1.2:  # 帧率过高，可以提高码率
+            new_bitrate = min(self.max_bitrate, self.current_bitrate * 1.1)
+            mylogger.info(f"帧率良好({avg_fps:.1f}fps > {target_fps*1.2:.1f}fps)，提高码率: {self.current_bitrate/1000:.0f}k -> {new_bitrate/1000:.0f}k")
+            self.current_bitrate = new_bitrate
+        else:
+            mylogger.info(f"帧率正常({avg_fps:.1f}fps)，保持当前码率: {self.current_bitrate/1000:.0f}kbps")
+    
+    def get_current_bitrate(self):
+        """获取当前码率"""
+        return self.current_bitrate
+
+
 class PlayerStreamTrack(MediaStreamTrack):
     """
     A video track that returns an animated flag.
@@ -62,6 +123,25 @@ class PlayerStreamTrack(MediaStreamTrack):
         self.config = config or {}
         self.max_queue_size = self.config.get('max_video_queue_size', 12)
         self.frame_drop_threshold = self.config.get('frame_drop_threshold', 12)
+        
+        # 初始化码率监控器
+        self.bitrate_monitor = BitrateMonitor(self.config)
+        
+        # 打印码率配置参数
+        if self.kind == 'video':
+            mylogger.info(f"=== WebRTC视频流配置 ===")
+            mylogger.info(f"目标帧率: {self.config.get('target_fps', 25)} fps")
+            mylogger.info(f"最大码率: {self.config.get('max_bitrate', 2000000)/1000:.0f}kbps")
+            mylogger.info(f"最小码率: {self.config.get('min_bitrate', 500000)/1000:.0f}kbps")
+            mylogger.info(f"起始码率: {self.config.get('start_bitrate', 1000000)/1000:.0f}kbps")
+            mylogger.info(f"最大队列大小: {self.max_queue_size}")
+            mylogger.info(f"帧丢弃阈值: {self.frame_drop_threshold}")
+        elif self.kind == 'audio':
+            mylogger.info(f"=== WebRTC音频流配置 ===")
+            mylogger.info(f"音频最大码率: {self.config.get('audio_max_bitrate', 128000)/1000:.0f}kbps")
+            mylogger.info(f"音频最小码率: {self.config.get('audio_min_bitrate', 64000)/1000:.0f}kbps")
+            mylogger.info(f"音频采样率: {SAMPLE_RATE}Hz")
+            mylogger.info(f"音频包时长: {AUDIO_PTIME*1000:.0f}ms")
         
         if self.kind == 'video':
             self.framecount = 0
@@ -163,6 +243,33 @@ class PlayerStreamTrack(MediaStreamTrack):
                     mylogger.warning(f"视频帧率过低: {avg_fps:.2f} fps")
                 elif avg_fps > 30:  # 如果帧率过高
                     mylogger.warning(f"视频帧率过高: {avg_fps:.2f} fps")
+                
+                # 码率质量建议
+                target_fps = self.config.get('target_fps', 25)
+                if abs(avg_fps - target_fps) > 5:
+                    mylogger.info(f"建议调整码率设置，当前帧率 {avg_fps:.2f} fps，目标帧率 {target_fps} fps")
+                
+                # 更新码率监控并打印详细信息
+                self.bitrate_monitor.update_metrics(avg_fps, self._queue.qsize())
+                current_bitrate = self.bitrate_monitor.get_current_bitrate()
+                
+                # 打印详细的码率信息
+                mylogger.info(f"=== 实时码率监控 ===")
+                mylogger.info(f"当前帧率: {avg_fps:.2f} fps")
+                mylogger.info(f"当前码率: {current_bitrate/1000:.0f}kbps")
+                mylogger.info(f"队列大小: {self._queue.qsize()}")
+                mylogger.info(f"配置码率范围: {self.config.get('min_bitrate', 500000)/1000:.0f}k - {self.config.get('max_bitrate', 2000000)/1000:.0f}k")
+                
+                # 计算码率使用率
+                max_bitrate = self.config.get('max_bitrate', 2000000)
+                bitrate_usage = (current_bitrate / max_bitrate) * 100
+                mylogger.info(f"码率使用率: {bitrate_usage:.1f}%")
+                
+                # 性能评估
+                if bitrate_usage > 80:
+                    mylogger.warning(f"码率使用率较高({bitrate_usage:.1f}%)，建议检查网络状况")
+                elif bitrate_usage < 30:
+                    mylogger.info(f"码率使用率较低({bitrate_usage:.1f}%)，可以考虑提高码率以获得更好质量")
                     
                 self.framecount = 0
                 self.totaltime=0

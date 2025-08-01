@@ -7,6 +7,7 @@ import uuid
 import hashlib
 import hmac
 import ipaddress
+import re
 from typing import Dict, Optional, Union
 from aiohttp import web
 from logger import logger
@@ -16,8 +17,8 @@ class AuthAPI:
     """鉴权相关API接口类"""
     
     def __init__(self):
-        # 存储有效的token和对应的uuid
-        self.tokens: Dict[str, Dict] = {}  # token -> {uuid, created_time, expires_time}
+        # 存储有效的token和对应的账号
+        self.tokens: Dict[str, Dict] = {}  # token -> {username, created_time, expires_time}
         self.token_secret = "Unimed_Token_Secret_2025"  # 用于签名验证的密钥
         self.token_expire_hours = 24  # token有效期（小时）
         
@@ -33,9 +34,17 @@ class AuthAPI:
             # 可以在这里添加更多允许的IP地址或IP段
         ]
     
-    def generate_token(self, client_uuid: str) -> str:
-        """生成token"""
-        # 生成随机token
+    def generate_token(self, username: str) -> str:
+        """生成token，如果用户已有未过期的token则返回现有token"""
+        # 先检查用户是否已有未过期的token
+        current_time = time.time()
+        for token, token_info in self.tokens.items():
+            if (token_info['username'] == username and 
+                current_time <= token_info['expires_time']):
+                logger.info(f"账号 {username} 已有未过期token，返回现有token: {token[:8]}...")
+                return token
+        
+        # 如果没有未过期的token，生成新的
         token = str(uuid.uuid4())
         
         # 计算过期时间
@@ -44,16 +53,56 @@ class AuthAPI:
         
         # 存储token信息
         self.tokens[token] = {
-            'uuid': client_uuid,
+            'username': username,
             'created_time': created_time,
             'expires_time': expires_time
         }
         
-        logger.info(f"为客户端 {client_uuid} 生成token: {token[:8]}...")
+        logger.info(f"为账号 {username} 生成新token: {token[:8]}...")
         return token
     
+    def force_generate_token(self, username: str) -> str:
+        """强制生成新token，先撤销用户的所有现有token"""
+        # 先撤销用户的所有现有token
+        self.revoke_user_tokens(username)
+        
+        # 生成新token
+        token = str(uuid.uuid4())
+        
+        # 计算过期时间
+        created_time = time.time()
+        expires_time = created_time + (self.token_expire_hours * 3600)
+        
+        # 存储token信息
+        self.tokens[token] = {
+            'username': username,
+            'created_time': created_time,
+            'expires_time': expires_time
+        }
+        
+        logger.info(f"为账号 {username} 强制生成新token: {token[:8]}...")
+        return token
+    
+    def revoke_user_tokens(self, username: str) -> int:
+        """撤销指定用户的所有token，返回撤销的token数量"""
+        revoked_count = 0
+        tokens_to_revoke = []
+        
+        for token, token_info in self.tokens.items():
+            if token_info['username'] == username:
+                tokens_to_revoke.append(token)
+        
+        for token in tokens_to_revoke:
+            del self.tokens[token]
+            revoked_count += 1
+        
+        if revoked_count > 0:
+            logger.info(f"撤销账号 {username} 的 {revoked_count} 个token")
+        
+        return revoked_count
+    
     def verify_token(self, token: str) -> Optional[str]:
-        """验证token，返回对应的uuid，如果无效返回None"""
+        """验证token，返回对应的账号，如果无效返回None"""
         if token not in self.tokens:
             return None
         
@@ -66,7 +115,7 @@ class AuthAPI:
             logger.warning(f"Token已过期: {token[:8]}...")
             return None
         
-        return token_info['uuid']
+        return token_info['username']
     
     def revoke_token(self, token: str) -> bool:
         """撤销token"""
@@ -90,6 +139,18 @@ class AuthAPI:
         
         if expired_tokens:
             logger.info(f"清理了 {len(expired_tokens)} 个过期token")
+    
+    def validate_username(self, username: str) -> bool:
+        """验证账号格式"""
+        # 账号格式要求：3-20位字母、数字、下划线
+        if not username or len(username) < 3 or len(username) > 20:
+            return False
+        
+        # 只允许字母、数字、下划线
+        if not re.match(r'^[a-zA-Z0-9_]+$', username):
+            return False
+        
+        return True
     
     def check_ip_whitelist(self, request) -> bool:
         """检查请求IP是否在白名单中"""
@@ -169,7 +230,7 @@ class AuthAPI:
         tags:
           - Authentication
         summary: 获取访问token
-        description: 根据客户端UUID获取访问token，用于后续API调用（需要IP白名单授权）
+        description: 根据账号获取访问token，用于后续API调用（需要IP白名单授权）
         consumes:
           - application/json
         produces:
@@ -181,10 +242,14 @@ class AuthAPI:
             schema:
               type: object
               properties:
-                uuid:
+                username:
                   type: string
-                  description: 客户端唯一标识符
+                  description: 用户账号（3-20位字母、数字、下划线）
                   required: true
+                force_refresh:
+                  type: boolean
+                  description: 是否强制刷新token（默认false，返回现有未过期token）
+                  required: false
         responses:
           200:
             description: 获取成功
@@ -251,38 +316,43 @@ class AuthAPI:
                 }, status=400)
             
             data = await request.json()
-            client_uuid = data.get('uuid')
+            username = data.get('username')
+            force_refresh = data.get('force_refresh', False)  # 默认不强制刷新
             
             # 参数验证
-            if not client_uuid:
+            if not username:
                 return web.json_response({
                     "success": False,
                     "error": "缺少必要参数",
-                    "message": "请提供 uuid 参数"
+                    "message": "请提供 username 参数"
                 }, status=400)
             
-            # 验证UUID格式
-            try:
-                uuid.UUID(client_uuid)
-            except ValueError:
+            # 验证账号格式
+            if not self.validate_username(username):
                 return web.json_response({
                     "success": False,
-                    "error": "无效的UUID格式",
-                    "message": "请提供有效的UUID格式"
+                    "error": "无效的账号格式",
+                    "message": "账号格式要求：3-20位字母、数字、下划线"
                 }, status=400)
             
             # 清理过期token
             self.cleanup_expired_tokens()
             
-            # 生成token
-            token = self.generate_token(client_uuid)
+            # 根据force_refresh参数决定是否强制生成新token
+            if force_refresh:
+                token = self.force_generate_token(username)
+                message = "token强制刷新成功"
+            else:
+                token = self.generate_token(username)
+                message = "token获取成功"
+            
             expires_in = self.token_expire_hours * 3600
             
             return web.json_response({
                 "success": True,
                 "token": token,
                 "expires_in": expires_in,
-                "message": "token获取成功"
+                "message": message
             })
                 
         except json.JSONDecodeError as e:
@@ -436,9 +506,9 @@ class AuthAPI:
                 valid:
                   type: boolean
                   description: token是否有效
-                uuid:
+                username:
                   type: string
-                  description: 客户端UUID（仅当token有效时）
+                  description: 用户账号（仅当token有效时）
                 expires_in:
                   type: integer
                   description: 剩余有效期（秒，仅当token有效时）
@@ -482,9 +552,9 @@ class AuthAPI:
                 }, status=400)
             
             # 验证token
-            client_uuid = self.verify_token(token)
+            username = self.verify_token(token)
             
-            if client_uuid:
+            if username:
                 # token有效
                 token_info = self.tokens[token]
                 expires_in = max(0, int(token_info['expires_time'] - time.time()))
@@ -492,7 +562,7 @@ class AuthAPI:
                 return web.json_response({
                     "success": True,
                     "valid": True,
-                    "uuid": client_uuid,
+                    "username": username,
                     "expires_in": expires_in,
                     "message": "token有效"
                 })
@@ -517,6 +587,147 @@ class AuthAPI:
                 "success": False,
                 "error": str(e),
                 "message": "验证token时发生错误"
+            }, status=500)
+
+
+    async def refresh_token_api(self, request):
+        """
+        刷新访问token
+        
+        ---
+        tags:
+          - Authentication
+        summary: 刷新访问token
+        description: 强制为指定账号生成新的访问token，会撤销所有现有token
+        consumes:
+          - application/json
+        produces:
+          - application/json
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  description: 用户账号（3-20位字母、数字、下划线）
+                  required: true
+        responses:
+          200:
+            description: 刷新成功
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  description: 是否成功
+                token:
+                  type: string
+                  description: 新的访问token
+                expires_in:
+                  type: integer
+                  description: token有效期（秒）
+                revoked_count:
+                  type: integer
+                  description: 撤销的旧token数量
+                message:
+                  type: string
+                  description: 状态消息
+          400:
+            description: 请求参数错误
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  description: 是否成功
+                error:
+                  type: string
+                  description: 错误信息
+                message:
+                  type: string
+                  description: 错误描述
+          403:
+            description: IP地址未授权
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  description: 是否成功
+                error:
+                  type: string
+                  description: 错误信息
+                message:
+                  type: string
+                  description: 错误描述
+        """
+        try:
+            # 检查IP白名单
+            if not self.check_ip_whitelist(request):
+                return web.json_response({
+                    "success": False,
+                    "error": "IP地址未授权",
+                    "message": "您的IP地址不在白名单中，无法访问此接口"
+                }, status=403)
+            
+            # 检查请求体是否为空
+            body = await request.text()
+            if not body.strip():
+                return web.json_response({
+                    "success": False,
+                    "error": "请求体为空",
+                    "message": "请提供有效的JSON数据"
+                }, status=400)
+            
+            data = await request.json()
+            username = data.get('username')
+            
+            # 参数验证
+            if not username:
+                return web.json_response({
+                    "success": False,
+                    "error": "缺少必要参数",
+                    "message": "请提供 username 参数"
+                }, status=400)
+            
+            # 验证账号格式
+            if not self.validate_username(username):
+                return web.json_response({
+                    "success": False,
+                    "error": "无效的账号格式",
+                    "message": "账号格式要求：3-20位字母、数字、下划线"
+                }, status=400)
+            
+            # 清理过期token
+            self.cleanup_expired_tokens()
+            
+            # 强制生成新token
+            token = self.force_generate_token(username)
+            expires_in = self.token_expire_hours * 3600
+            
+            return web.json_response({
+                "success": True,
+                "token": token,
+                "expires_in": expires_in,
+                "message": "token刷新成功"
+            })
+                
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON解析失败: {e}")
+            return web.json_response({
+                "success": False,
+                "error": "JSON格式错误",
+                "message": f"无效的JSON格式: {str(e)}"
+            }, status=400)
+        except Exception as e:
+            logger.error(f"刷新token失败: {e}")
+            return web.json_response({
+                "success": False,
+                "error": str(e),
+                "message": "刷新token时发生错误"
             }, status=500)
 
 
@@ -545,16 +756,16 @@ def require_auth(auth_api: AuthAPI):
             token = auth_header[7:]  # 去掉 "Bearer " 前缀
             
             # 验证token
-            client_uuid = auth_api.verify_token(token)
-            if not client_uuid:
+            username = auth_api.verify_token(token)
+            if not username:
                 return web.json_response({
                     "success": False,
                     "error": "token无效",
                     "message": "token无效或已过期，请重新获取"
                 }, status=401)
             
-            # 将client_uuid添加到请求中，供后续使用
-            request['client_uuid'] = client_uuid
+            # 将username添加到请求中，供后续使用
+            request['username'] = username
             
             # 调用原始函数
             return await func(request)
