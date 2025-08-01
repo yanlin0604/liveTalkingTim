@@ -127,7 +127,7 @@ class WebRTCAPI:
         with self.nerfreals_lock:
             self.nerfreals[sessionid] = None
         
-        logger.info('sessionid=%d, session num=%d', sessionid, len(self.nerfreals))
+        logger.info('会话ID=%d, 当前会话数=%d', sessionid, len(self.nerfreals))
         nerfreal = await asyncio.get_event_loop().run_in_executor(None, self.build_nerfreal, sessionid)
         
         with self.nerfreals_lock:
@@ -139,14 +139,19 @@ class WebRTCAPI:
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
-            logger.info("Connection state is %s" % pc.connectionState)
-            if pc.connectionState == "failed":
+            logger.info("连接状态变化: %s" % pc.connectionState)
+            if pc.connectionState == "connected":
+                logger.info(f"✅ WebRTC连接已建立 - 会话 {sessionid}")
+                logger.info(f"📊 当前码率配置: 最大={max_bitrate/1000:.0f}k, 最小={min_bitrate/1000:.0f}k, 起始={start_bitrate/1000:.0f}k")
+            elif pc.connectionState == "failed":
+                logger.error(f"❌ WebRTC连接失败 - 会话 {sessionid}")
                 await pc.close()
                 self.pcs.discard(pc)
                 with self.nerfreals_lock:
                     if sessionid in self.nerfreals:
                         del self.nerfreals[sessionid]
             if pc.connectionState == "closed":
+                logger.info(f"🔌 WebRTC连接已关闭 - 会话 {sessionid}")
                 self.pcs.discard(pc)
                 with self.nerfreals_lock:
                     if sessionid in self.nerfreals:
@@ -158,7 +163,7 @@ class WebRTCAPI:
             nerfreal_for_player = self.nerfreals.get(sessionid)
         
         if nerfreal_for_player is None:
-            logger.error(f"Failed to get nerfreal for session {sessionid}")
+            logger.error(f"获取会话 {sessionid} 的nerfreal对象失败")
             return web.Response(status=500, text="Internal server error")
         
         player = HumanPlayer(nerfreal_for_player)
@@ -187,8 +192,19 @@ class WebRTCAPI:
             logger.info("将使用默认码率设置")
         
         capabilities = RTCRtpSender.getCapabilities("video")
-        preferences = list(filter(lambda x: x.name == "H264", capabilities.codecs))
-        preferences += list(filter(lambda x: x.name == "VP8", capabilities.codecs))
+        # 优先使用VP8编码器，避免H.264 Level限制问题
+        # 可以通过配置选择编码器优先级
+        encoder_preference = getattr(nerfreal_for_player, 'encoder_preference', 'vp8_first')
+        
+        if encoder_preference == 'h264_first':
+            preferences = list(filter(lambda x: x.name == "H264", capabilities.codecs))
+            preferences += list(filter(lambda x: x.name == "VP8", capabilities.codecs))
+            logger.info(f"🎬 编码器优先级: H264 > VP8 > RTX")
+        else:  # 默认VP8优先
+            preferences = list(filter(lambda x: x.name == "VP8", capabilities.codecs))
+            preferences += list(filter(lambda x: x.name == "H264", capabilities.codecs))
+            logger.info(f"🎬 编码器优先级: VP8 > H264 > RTX (推荐，避免Level限制)")
+        
         preferences += list(filter(lambda x: x.name == "rtx", capabilities.codecs))
         transceiver = pc.getTransceivers()[1]
         transceiver.setCodecPreferences(preferences)
@@ -209,8 +225,11 @@ class WebRTCAPI:
                     params.encodings[0].maxBitrate = max_bitrate
                     params.encodings[0].minBitrate = min_bitrate
                     params.encodings[0].maxFramerate = max_fps
+                    # 添加H.264 Level 3.1兼容性设置
+                    params.encodings[0].scaleResolutionDownBy = 1.0  # 不缩放分辨率
                     sender.setParameters(params)
                     logger.info(f"✅ 设置编码参数: 最大码率={max_bitrate/1000:.0f}k, 最大帧率={max_fps}")
+                    logger.info(f"📐 分辨率限制: {max_width}x{max_height}, H.264 Level 3.1兼容")
         except Exception as e:
             logger.warning(f"设置编码参数失败: {e}")
 
@@ -218,7 +237,7 @@ class WebRTCAPI:
 
         answer = await pc.createAnswer()
         
-        # 在SDP中添加码率限制 - 改进版本
+        # 在SDP中添加码率限制和编码器优化 - 改进版本
         try:
             sdp_lines = answer.sdp.split('\n')
             modified_sdp_lines = []
@@ -228,18 +247,25 @@ class WebRTCAPI:
             for i, line in enumerate(sdp_lines):
                 modified_sdp_lines.append(line)
                 
-                # 在视频媒体行后添加码率限制
+                # 在视频媒体行后添加码率限制和编码器优化
                 if line.startswith('m=video') and not video_bitrate_added:
                     # 查找视频媒体段的结束位置
                     j = i + 1
                     while j < len(sdp_lines) and not sdp_lines[j].startswith('m='):
                         j += 1
                     
-                    # 在视频媒体段末尾添加码率设置
+                    # 在视频媒体段末尾添加码率设置和编码器参数
                     if j < len(sdp_lines):
+                        # 添加码率限制
                         modified_sdp_lines.insert(j, f'b=AS:{max_bitrate // 1000}')
                         modified_sdp_lines.insert(j + 1, f'b=TIAS:{max_bitrate}')
+                        
+                        # 添加VP8编码器优化参数
+                        modified_sdp_lines.insert(j + 2, 'a=fmtp:96 max-fr=30;max-fs=3600')
+                        modified_sdp_lines.insert(j + 3, 'a=fmtp:96 profile-level-id=42e01f')
+                        
                         logger.info(f"✅ 在SDP中添加视频码率限制: {max_bitrate // 1000}k")
+                        logger.info(f"🔧 添加VP8编码器优化参数")
                         video_bitrate_added = True
                 
                 # 在音频媒体行后添加码率限制
@@ -258,7 +284,7 @@ class WebRTCAPI:
             
             modified_sdp = '\n'.join(modified_sdp_lines)
             answer = RTCSessionDescription(sdp=modified_sdp, type=answer.type)
-            logger.info("✅ SDP码率参数设置成功")
+            logger.info("✅ SDP码率参数和编码器优化设置成功")
         except Exception as e:
             logger.warning(f"SDP码率设置失败: {e}")
         

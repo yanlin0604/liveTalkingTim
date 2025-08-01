@@ -291,6 +291,12 @@ def build_nerfreal(sessionid:int)->BaseReal:
     if opt.model == 'wav2lip':
         from lipreal import LipReal
         nerfreal = LipReal(opt,model,avatar)
+        # 为新会话预热模型，确保推理稳定性
+        logger.info(f"正在为会话 {sessionid} 预热模型...")
+        from lipreal import warm_up
+        model_res = 384 if '384' in str(model) else 256
+        warm_up(opt.batch_size, model, model_res)
+        logger.info(f"会话 {sessionid} 模型预热完成")
     elif opt.model == 'musetalk':
         from musereal import MuseReal
         nerfreal = MuseReal(opt,model,avatar)
