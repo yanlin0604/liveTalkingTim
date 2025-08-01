@@ -40,9 +40,67 @@ from aiortc import (
     MediaStreamTrack,
 )
 
-logging.basicConfig()
+# 配置aiortc模块的详细日志
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# 启用aiortc相关模块的详细日志
+aiortc_logger = logging.getLogger('aiortc')
+aiortc_logger.setLevel(logging.DEBUG)
+
+# 启用其他相关模块的日志
+rtp_logger = logging.getLogger('aiortc.rtcrtpsender')
+rtp_logger.setLevel(logging.DEBUG)
+
+rtp_receiver_logger = logging.getLogger('aiortc.rtcrtpreceiver')
+rtp_receiver_logger.setLevel(logging.DEBUG)
+
+connection_logger = logging.getLogger('aiortc.rtcicetransport')
+connection_logger.setLevel(logging.DEBUG)
+
+dtls_logger = logging.getLogger('aiortc.rtcdtlstransport')
+dtls_logger.setLevel(logging.DEBUG)
+
+sctp_logger = logging.getLogger('aiortc.rtcsctptransport')
+sctp_logger.setLevel(logging.DEBUG)
+
+peer_connection_logger = logging.getLogger('aiortc.rtcpeerconnection')
+peer_connection_logger.setLevel(logging.DEBUG)
+
+# 启用更多相关模块的日志
+media_logger = logging.getLogger('aiortc.mediastreams')
+media_logger.setLevel(logging.DEBUG)
+
+codec_logger = logging.getLogger('aiortc.codecs')
+codec_logger.setLevel(logging.DEBUG)
+
+# 启用av库的日志（用于音视频处理）
+av_logger = logging.getLogger('av')
+av_logger.setLevel(logging.INFO)  # 设置为INFO级别避免过于详细
+
+# 启用asyncio的日志（用于异步操作）
+asyncio_logger = logging.getLogger('asyncio')
+asyncio_logger.setLevel(logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 from logger import logger as mylogger
+
+# 添加日志输出说明
+mylogger.info("=== aiortc日志已启用 ===")
+mylogger.info("日志级别: DEBUG")
+mylogger.info("将输出以下模块的详细信息:")
+mylogger.info("- aiortc: 核心WebRTC功能")
+mylogger.info("- aiortc.rtcrtpsender: RTP发送器")
+mylogger.info("- aiortc.rtcrtpreceiver: RTP接收器") 
+mylogger.info("- aiortc.rtcicetransport: ICE传输")
+mylogger.info("- aiortc.rtcdtlstransport: DTLS传输")
+mylogger.info("- aiortc.rtcsctptransport: SCTP传输")
+mylogger.info("- aiortc.rtcpeerconnection: 对等连接")
+mylogger.info("- aiortc.mediastreams: 媒体流")
+mylogger.info("- aiortc.codecs: 编解码器")
+mylogger.info("=== 日志分析开始 ===")
 
 
 class BitrateMonitor:
@@ -173,11 +231,15 @@ class PlayerStreamTrack(MediaStreamTrack):
                     logger.warning(f"视频帧延迟过大({-wait_time:.3f}s)，重置时间基准")
                     self._start = current_time - self.current_frame_count * VIDEO_PTIME
                     
+                # 添加时间戳日志
+                logger.debug(f"[WebRTC] 视频时间戳 - PTS: {self._timestamp}, 等待时间: {wait_time:.3f}s")
+                    
             else:
                 self._start = time.time()
                 self._timestamp = 0
                 self.timelist.append(self._start)
                 mylogger.info('video start:%f',self._start)
+                logger.info(f"[WebRTC] 视频流开始 - 起始时间: {self._start}")
             return self._timestamp, VIDEO_TIME_BASE
         else: #audio
             if hasattr(self, "_timestamp"):
@@ -196,16 +258,26 @@ class PlayerStreamTrack(MediaStreamTrack):
                     logger.warning(f"音频帧延迟过大({-wait_time:.3f}s)，重置时间基准")
                     self._start = current_time - self.current_frame_count * AUDIO_PTIME
                     
+                # 添加音频时间戳日志
+                logger.debug(f"[WebRTC] 音频时间戳 - PTS: {self._timestamp}, 等待时间: {wait_time:.3f}s")
+                    
             else:
                 self._start = time.time()
                 self._timestamp = 0
                 self.timelist.append(self._start)
                 mylogger.info('audio start:%f',self._start)
+                logger.info(f"[WebRTC] 音频流开始 - 起始时间: {self._start}")
             return self._timestamp, AUDIO_TIME_BASE
 
     async def recv(self) -> Union[Frame, Packet]:
         # frame = self.frames[self.counter % 30]            
         self._player._start(self)
+        
+        # 添加详细的WebRTC日志
+        if self.kind == 'video':
+            logger.debug(f"[WebRTC] 视频帧接收 - 队列大小: {self._queue.qsize()}")
+        else:
+            logger.debug(f"[WebRTC] 音频帧接收 - 队列大小: {self._queue.qsize()}")
         
         # 添加队列管理
         if self.kind == 'video':
@@ -276,10 +348,12 @@ class PlayerStreamTrack(MediaStreamTrack):
         return frame
     
     def stop(self):
+        logger.info(f"[WebRTC] 停止媒体流轨道 - 类型: {self.kind}")
         super().stop()
         if self._player is not None:
             self._player._stop(self)
             self._player = None
+            logger.info(f"[WebRTC] 媒体流轨道已停止 - 类型: {self.kind}")
 
 def player_worker_thread(
     quit_event,
@@ -330,8 +404,11 @@ class HumanPlayer:
 
     def _start(self, track: PlayerStreamTrack) -> None:
         self.__started.add(track)
+        logger.info(f"[WebRTC] 启动媒体轨道 - 类型: {track.kind}")
+        
         if self.__thread is None:
             self.__log_debug("Starting worker thread")
+            logger.info("[WebRTC] 创建媒体播放器工作线程")
             self.__thread_quit = threading.Event()
             self.__thread = threading.Thread(
                 name="media-player",
@@ -345,21 +422,26 @@ class HumanPlayer:
                 ),
             )
             self.__thread.start()
+            logger.info("[WebRTC] 媒体播放器工作线程已启动")
 
     def _stop(self, track: PlayerStreamTrack) -> None:
         self.__started.discard(track)
+        logger.info(f"[WebRTC] 停止媒体轨道 - 类型: {track.kind}")
 
         if not self.__started and self.__thread is not None:
             self.__log_debug("Stopping worker thread")
+            logger.info("[WebRTC] 停止媒体播放器工作线程")
             self.__thread_quit.set()
             self.__thread.join()
             self.__thread = None
             self.__log_debug("Worker thread stopped successfully")
+            logger.info("[WebRTC] 媒体播放器工作线程已停止")
 
         if not self.__started and self.__container is not None:
             #self.__container.close()
             self.__container = None
             self.__log_debug("Container reference cleared")
+            logger.info("[WebRTC] 容器引用已清除")
 
     def __log_debug(self, msg: str, *args) -> None:
         mylogger.debug(f"HumanPlayer {msg}", *args)

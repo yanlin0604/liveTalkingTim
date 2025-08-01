@@ -92,7 +92,7 @@ import threading
 nerfreals_lock = threading.Lock()
 
 # 训练任务管理
-training_tasks: Dict[str, Dict] = {}  # task_id -> task_info
+training_tasks: Dict[str, TrainingTask] = {}  # task_id -> TrainingTask object
 training_tasks_lock = threading.Lock()
 TRAINING_TASKS_FILE = "data/training_tasks.json"  # 训练任务数据文件
 
