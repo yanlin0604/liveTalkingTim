@@ -354,10 +354,12 @@ class HumanPlayer:
             self.__thread_quit.set()
             self.__thread.join()
             self.__thread = None
+            self.__log_debug("Worker thread stopped successfully")
 
         if not self.__started and self.__container is not None:
             #self.__container.close()
             self.__container = None
+            self.__log_debug("Container reference cleared")
 
     def __log_debug(self, msg: str, *args) -> None:
         mylogger.debug(f"HumanPlayer {msg}", *args)

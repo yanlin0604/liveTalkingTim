@@ -554,6 +554,7 @@ if __name__ == '__main__':
     
     # WebRTC相关接口
     appasync.router.add_post("/offer", webrtc_api.offer)  # WebRTC连接建立，处理SDP offer
+    appasync.router.add_get("/webrtc/status", webrtc_api.get_connection_status)  # 获取WebRTC连接状态
 
     # 文本交互接口
     appasync.router.add_post("/human", chat_api.human)  # 发送文本消息给数字人（支持echo/chat模式，可选打断）

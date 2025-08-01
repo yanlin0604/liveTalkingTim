@@ -49,14 +49,17 @@ class ConfigAPI:
         """
         更新配置接口
         
-        功能：动态更新单个配置参数
+        功能：动态更新配置参数，支持单个和批量更新
         方法：POST
-        参数：
+        参数格式1（单个配置）：
             - key: 配置参数名
             - value: 新的配置值
+        参数格式2（批量配置）：
+            - configs: 配置字典，格式为 {"key1": "value1", "key2": "value2", ...}
         返回：
             - success: 是否成功
             - message: 状态消息
+            - updated_count: 更新的配置项数量（批量模式）
         """
         try:
             # 检查请求体是否为空
@@ -69,23 +72,64 @@ class ConfigAPI:
                 )
             
             params = await request.json()
-            key = params.get('key')
-            value = params.get('value')
             
-            if not key:
+            # 检查是否为批量更新模式
+            if 'configs' in params:
+                # 批量更新模式
+                configs = params.get('configs')
+                if not isinstance(configs, dict):
+                    return web.Response(
+                        content_type="application/json",
+                        text=json.dumps({"success": False, "message": "configs参数必须是字典格式"}, ensure_ascii=False),
+                        status=400
+                    )
+                
+                if not configs:
+                    return web.Response(
+                        content_type="application/json",
+                        text=json.dumps({"success": False, "message": "configs字典不能为空"}, ensure_ascii=False),
+                        status=400
+                    )
+                
+                # 批量更新配置
+                updated_count = 0
+                for key, value in configs.items():
+                    if key:  # 确保key不为空
+                        set_config(key, value, save=False)  # 先不保存，最后统一保存
+                        updated_count += 1
+                
+                # 统一保存到文件
+                dynamic_config.save_config()
+                
                 return web.Response(
                     content_type="application/json",
-                    text=json.dumps({"success": False, "message": "缺少参数key"}, ensure_ascii=False),
-                    status=400
+                    text=json.dumps({
+                        "success": True, 
+                        "message": f"批量更新了 {updated_count} 个配置项",
+                        "updated_count": updated_count
+                    }, ensure_ascii=False),
                 )
             
-            # 更新配置
-            set_config(key, value, save=True)
-            
-            return web.Response(
-                content_type="application/json",
-                text=json.dumps({"success": True, "message": f"配置 {key} 已更新"}, ensure_ascii=False),
-            )
+            else:
+                # 单个更新模式（保持向后兼容）
+                key = params.get('key')
+                value = params.get('value')
+                
+                if not key:
+                    return web.Response(
+                        content_type="application/json",
+                        text=json.dumps({"success": False, "message": "缺少参数key或configs"}, ensure_ascii=False),
+                        status=400
+                    )
+                
+                # 更新单个配置
+                set_config(key, value, save=True)
+                
+                return web.Response(
+                    content_type="application/json",
+                    text=json.dumps({"success": True, "message": f"配置 {key} 已更新"}, ensure_ascii=False),
+                )
+                
         except json.JSONDecodeError as e:
             return web.Response(
                 content_type="application/json",

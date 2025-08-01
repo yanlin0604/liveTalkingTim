@@ -5,6 +5,7 @@ import json
 import random
 import asyncio
 import gc
+import time
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceServer, RTCConfiguration
 from aiortc.rtcrtpsender import RTCRtpSender
@@ -27,6 +28,8 @@ class WebRTCAPI:
         self.nerfreals = nerfreals_dict
         self.nerfreals_lock = nerfreals_lock
         self.pcs = pcs_set
+        self.connection_stats = {}  # 存储连接统计信息
+        self.reconnect_attempts = {}  # 存储重连尝试次数
     
     async def offer(self, request):
         """
@@ -140,23 +143,43 @@ class WebRTCAPI:
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
             logger.info("连接状态变化: %s" % pc.connectionState)
+            
+            # 更新连接统计信息
+            if sessionid not in self.connection_stats:
+                self.connection_stats[sessionid] = {
+                    'created_time': time.time(),
+                    'last_state_change': time.time(),
+                    'state_history': []
+                }
+            
+            self.connection_stats[sessionid]['last_state_change'] = time.time()
+            self.connection_stats[sessionid]['state_history'].append({
+                'state': pc.connectionState,
+                'timestamp': time.time()
+            })
+            
             if pc.connectionState == "connected":
                 logger.info(f"✅ WebRTC连接已建立 - 会话 {sessionid}")
                 logger.info(f"📊 当前码率配置: 最大={max_bitrate/1000:.0f}k, 最小={min_bitrate/1000:.0f}k, 起始={start_bitrate/1000:.0f}k")
+                # 重置重连尝试次数
+                self.reconnect_attempts[sessionid] = 0
+                
             elif pc.connectionState == "failed":
                 logger.error(f"❌ WebRTC连接失败 - 会话 {sessionid}")
                 await pc.close()
                 self.pcs.discard(pc)
-                with self.nerfreals_lock:
-                    if sessionid in self.nerfreals:
-                        del self.nerfreals[sessionid]
-            if pc.connectionState == "closed":
+                # 优雅清理nerfreal资源
+                await self._cleanup_nerfreal_session(sessionid)
+                
+            elif pc.connectionState == "closed":
                 logger.info(f"🔌 WebRTC连接已关闭 - 会话 {sessionid}")
                 self.pcs.discard(pc)
-                with self.nerfreals_lock:
-                    if sessionid in self.nerfreals:
-                        del self.nerfreals[sessionid]
+                # 优雅清理nerfreal资源
+                await self._cleanup_nerfreal_session(sessionid)
                 gc.collect()
+                
+            # 记录连接状态变化
+            logger.info(f"📈 会话 {sessionid} 连接统计: 状态={pc.connectionState}, 持续时间={time.time() - self.connection_stats[sessionid]['created_time']:.1f}s")
 
         # 安全获取nerfreal对象
         with self.nerfreals_lock:
@@ -296,3 +319,100 @@ class WebRTCAPI:
                 {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type, "sessionid": sessionid}
             ),
         ) 
+
+    async def get_connection_status(self, request):
+        """
+        获取连接状态监控信息
+        
+        ---
+        tags:
+          - WebRTC
+        summary: 获取连接状态
+        description: 获取所有WebRTC连接的状态统计信息
+        produces:
+          - application/json
+        responses:
+          200:
+            description: 连接状态信息
+            schema:
+              type: object
+              properties:
+                active_connections:
+                  type: integer
+                  description: 活跃连接数
+                total_sessions:
+                  type: integer
+                  description: 总会话数
+                connection_stats:
+                  type: object
+                  description: 各会话的连接统计
+        """
+        try:
+            active_connections = len(self.pcs)
+            total_sessions = len(self.nerfreals)
+            
+            # 清理过期的连接统计信息
+            current_time = time.time()
+            expired_sessions = []
+            for sessionid, stats in self.connection_stats.items():
+                if current_time - stats['last_state_change'] > 3600:  # 1小时无活动则清理
+                    expired_sessions.append(sessionid)
+            
+            for sessionid in expired_sessions:
+                del self.connection_stats[sessionid]
+                if sessionid in self.reconnect_attempts:
+                    del self.reconnect_attempts[sessionid]
+            
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({
+                    "active_connections": active_connections,
+                    "total_sessions": total_sessions,
+                    "connection_stats": self.connection_stats,
+                    "reconnect_attempts": self.reconnect_attempts
+                }, ensure_ascii=False, indent=2)
+            )
+        except Exception as e:
+            logger.error(f"获取连接状态失败: {e}")
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({"error": str(e)}),
+                status=500
+            )
+
+    async def _cleanup_nerfreal_session(self, sessionid):
+        """优雅清理nerfreal会话资源"""
+        try:
+            with self.nerfreals_lock:
+                if sessionid in self.nerfreals:
+                    nerfreal = self.nerfreals[sessionid]
+                    logger.info(f"🧹 开始清理会话 {sessionid} 的资源...")
+                    
+                    # 停止渲染线程（如果正在运行）
+                    if hasattr(nerfreal, 'render_event') and nerfreal.render_event:
+                        nerfreal.render_event.clear()
+                        logger.info(f"🛑 停止会话 {sessionid} 的渲染事件")
+                    
+                    # 停止TTS线程（如果正在运行）
+                    if hasattr(nerfreal, 'tts') and hasattr(nerfreal.tts, 'state'):
+                        nerfreal.tts.state = 1  # 设置为PAUSE状态
+                        logger.info(f"🛑 停止会话 {sessionid} 的TTS处理")
+                    
+                    # 清理音频和视频队列
+                    if hasattr(nerfreal, 'asr') and hasattr(nerfreal.asr, 'feat_queue'):
+                        try:
+                            while not nerfreal.asr.feat_queue.empty():
+                                nerfreal.asr.feat_queue.get_nowait()
+                        except:
+                            pass
+                        logger.info(f"🧹 清理会话 {sessionid} 的音频特征队列")
+                    
+                    # 删除nerfreal对象
+                    del self.nerfreals[sessionid]
+                    logger.info(f"✅ 会话 {sessionid} 资源清理完成")
+                    
+        except Exception as e:
+            logger.error(f"❌ 清理会话 {sessionid} 资源时出错: {e}")
+        finally:
+            # 强制垃圾回收
+            gc.collect() 

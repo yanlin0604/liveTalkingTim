@@ -83,7 +83,26 @@ class BaseTTS:
             except queue.Empty:
                 continue
             self.txt_to_audio(msg)
-        logger.info('ttsreal thread stop')
+        
+        # 优雅停止：清理资源并记录日志
+        logger.info('ttsreal thread stop - 优雅清理完成')
+        
+        # 清理消息队列中的剩余数据
+        try:
+            while not self.msgqueue.empty():
+                self.msgqueue.get_nowait()
+            logger.info('🧹 清理TTS消息队列')
+        except:
+            pass
+            
+        # 清理输入流
+        if hasattr(self, 'input_stream'):
+            try:
+                self.input_stream.seek(0)
+                self.input_stream.truncate()
+                logger.info('🧹 清理TTS输入流')
+            except:
+                pass
     
     def txt_to_audio(self,msg):
         pass

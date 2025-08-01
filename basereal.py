@@ -603,7 +603,26 @@ class BaseReal:
         if self.opt.transport=='virtualcam':
             audio_thread.join()
             vircam.close()
-        logger.info('basereal process_frames thread stop') 
+        
+        # 优雅停止：清理资源并记录日志
+        logger.info('basereal process_frames thread stop - 优雅清理完成')
+        
+        # 清理队列中的剩余数据
+        try:
+            while not self.res_frame_queue.empty():
+                self.res_frame_queue.get_nowait()
+            logger.info('🧹 清理剩余帧队列数据')
+        except:
+            pass
+            
+        # 清理音频特征队列
+        if hasattr(self, 'asr') and hasattr(self.asr, 'feat_queue'):
+            try:
+                while not self.asr.feat_queue.empty():
+                    self.asr.feat_queue.get_nowait()
+                logger.info('🧹 清理音频特征队列')
+            except:
+                pass
     
     # def process_custom(self,audiotype:int,idx:int):
     #     if self.curr_state!=audiotype: #从推理切到口播
