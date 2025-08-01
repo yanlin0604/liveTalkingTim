@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>livetalking数字人交互平台</title>
+    <title>数字人交互平台</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
@@ -336,7 +336,7 @@
     <div class="dashboard-container">
         <div class="row">
             <div class="col-12">
-                <h1 class="text-center mb-4">livetalking数字人交互平台</h1>
+                <h1 class="text-center mb-4">数字人交互平台</h1>
             </div>
         </div>
 
@@ -456,7 +456,7 @@
                             <div class="tab-pane fade show active" id="chat" role="tabpanel" aria-labelledby="chat-tab">
                                 <div class="asr-container mb-3" id="chat-messages">
                                     <div class="asr-text system-message">
-                                        系统: 欢迎使用livetalking，请点击"开始连接"按钮开始对话。
+                                        系统: 欢迎使用，请点击"开始连接"按钮开始对话。
                                     </div>
                                 </div>
                                 
@@ -1042,6 +1042,20 @@
                             // 显示配置信息
                             const status = data.data.use_custom_silent ? '已开启' : '已关闭';
                             addChatMessage(`💡 静音时自动使用自定义动作功能: ${status}`, 'system');
+
+                            // 如果开启了静默动作，显示选择器并加载动作列表
+                            if (data.data.use_custom_silent) {
+                                $('#silent-action-selector').show();
+                                loadSilentActions().then(() => {
+                                    // 设置默认选中的动作
+                                    if (data.data.custom_silent_audiotype) {
+                                        $('#silent-action-select').val(data.data.custom_silent_audiotype);
+                                    } else {
+                                        // 如果为空，选择第一个选项（自动选择）
+                                        $('#silent-action-select').val($('#silent-action-select option:first').val());
+                                    }
+                                });
+                            }
                         }
                     })
                     .catch(error => {
@@ -1049,6 +1063,28 @@
                         addChatMessage('💡 静音时自动使用自定义动作功能已就绪', 'system');
                     });
             });
+
+            // 加载可用的静默动作列表
+            function loadSilentActions() {
+                return fetch('/get_actions')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.code === 0) {
+                            const select = $('#silent-action-select');
+                            select.empty();
+                            select.append('<option value="">自动选择第一个可用动作</option>');
+                            
+                            data.data.forEach(action => {
+                                const option = `<option value="${action.name}">${action.name} - ${action.description || '无描述'}</option>`;
+                                select.append(option);
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('加载动作列表失败:', error);
+                        $('#silent-action-select').html('<option value="">加载失败</option>');
+                    });
+            }
         });
     </script>
 </body>

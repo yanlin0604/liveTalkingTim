@@ -50,13 +50,19 @@ class PlayerStreamTrack(MediaStreamTrack):
     A video track that returns an animated flag.
     """
 
-    def __init__(self, player, kind):
+    def __init__(self, player, kind, config=None):
         super().__init__()  # don't forget this!
         self.kind = kind
         self._player = player
         self._queue = asyncio.Queue()
         self.timelist = [] #记录最近包的时间戳
         self.current_frame_count = 0
+        
+        # 使用配置参数
+        self.config = config or {}
+        self.max_queue_size = self.config.get('max_video_queue_size', 12)
+        self.frame_drop_threshold = self.config.get('frame_drop_threshold', 12)
+        
         if self.kind == 'video':
             self.framecount = 0
             self.lasttime = time.perf_counter()
@@ -71,16 +77,22 @@ class PlayerStreamTrack(MediaStreamTrack):
 
         if self.kind == 'video':
             if hasattr(self, "_timestamp"):
-                #self._timestamp = (time.time()-self._start) * VIDEO_CLOCK_RATE
+                # 优化时间戳计算，确保稳定的帧率
                 self._timestamp += int(VIDEO_PTIME * VIDEO_CLOCK_RATE)
                 self.current_frame_count += 1
-                wait = self._start + self.current_frame_count * VIDEO_PTIME - time.time()
-                # wait = self.timelist[0] + len(self.timelist)*VIDEO_PTIME - time.time()               
-                if wait>0:
-                    await asyncio.sleep(wait)
-                # if len(self.timelist)>=100:
-                #     self.timelist.pop(0)
-                # self.timelist.append(time.time())
+                
+                # 改进的帧率控制
+                expected_time = self._start + self.current_frame_count * VIDEO_PTIME
+                current_time = time.time()
+                wait_time = expected_time - current_time
+                
+                if wait_time > 0:
+                    # 使用更精确的睡眠控制
+                    await asyncio.sleep(wait_time)
+                elif wait_time < -0.1:  # 如果延迟超过100ms，重置时间基准
+                    logger.warning(f"视频帧延迟过大({-wait_time:.3f}s)，重置时间基准")
+                    self._start = current_time - self.current_frame_count * VIDEO_PTIME
+                    
             else:
                 self._start = time.time()
                 self._timestamp = 0
@@ -89,17 +101,21 @@ class PlayerStreamTrack(MediaStreamTrack):
             return self._timestamp, VIDEO_TIME_BASE
         else: #audio
             if hasattr(self, "_timestamp"):
-                #self._timestamp = (time.time()-self._start) * SAMPLE_RATE
+                # 优化音频时间戳计算
                 self._timestamp += int(AUDIO_PTIME * SAMPLE_RATE)
                 self.current_frame_count += 1
-                wait = self._start + self.current_frame_count * AUDIO_PTIME - time.time()
-                # wait = self.timelist[0] + len(self.timelist)*AUDIO_PTIME - time.time()
-                if wait>0:
-                    await asyncio.sleep(wait)
-                # if len(self.timelist)>=200:
-                #     self.timelist.pop(0)
-                #     self.timelist.pop(0)
-                # self.timelist.append(time.time())
+                
+                # 改进的音频帧率控制
+                expected_time = self._start + self.current_frame_count * AUDIO_PTIME
+                current_time = time.time()
+                wait_time = expected_time - current_time
+                
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                elif wait_time < -0.05:  # 如果延迟超过50ms，重置时间基准
+                    logger.warning(f"音频帧延迟过大({-wait_time:.3f}s)，重置时间基准")
+                    self._start = current_time - self.current_frame_count * AUDIO_PTIME
+                    
             else:
                 self._start = time.time()
                 self._timestamp = 0
@@ -110,22 +126,21 @@ class PlayerStreamTrack(MediaStreamTrack):
     async def recv(self) -> Union[Frame, Packet]:
         # frame = self.frames[self.counter % 30]            
         self._player._start(self)
-        # if self.kind == 'video':
-        #     frame = await self._queue.get()
-        # else: #audio
-        #     if hasattr(self, "_timestamp"):
-        #         wait = self._start + self._timestamp / SAMPLE_RATE + AUDIO_PTIME - time.time()
-        #         if wait>0:
-        #             await asyncio.sleep(wait)
-        #         if self._queue.qsize()<1:
-        #             #frame = AudioFrame(format='s16', layout='mono', samples=320)
-        #             audio = np.zeros((1, 320), dtype=np.int16)
-        #             frame = AudioFrame.from_ndarray(audio, layout='mono', format='s16')
-        #             frame.sample_rate=16000
-        #         else:
-        #             frame = await self._queue.get()
-        #     else:
-        #         frame = await self._queue.get()
+        
+        # 添加队列管理
+        if self.kind == 'video':
+            # 视频队列管理
+            if self._queue.qsize() > self.max_queue_size:  # 如果队列过大，丢弃旧帧
+                try:
+                    # 丢弃一些旧帧以保持实时性
+                    for _ in range(self.frame_drop_threshold):
+                        self._queue.get_nowait()
+                    logger.warning("视频队列过大，丢弃旧帧")
+                except asyncio.QueueEmpty:
+                    pass
+            elif self._queue.qsize() < 2:  # 如果队列过小，可能需要等待
+                logger.debug("视频队列较小，等待更多帧")
+        
         frame,eventpoint = await self._queue.get()
         pts, time_base = await self.next_timestamp()
         frame.pts = pts
@@ -140,7 +155,15 @@ class PlayerStreamTrack(MediaStreamTrack):
             self.framecount += 1
             self.lasttime = time.perf_counter()
             if self.framecount==100:
-                mylogger.info(f"------actual avg final fps:{self.framecount/self.totaltime:.4f}")
+                avg_fps = self.framecount/self.totaltime
+                mylogger.info(f"------actual avg final fps:{avg_fps:.4f}")
+                
+                # 添加帧率质量监控
+                if avg_fps < 20:  # 如果帧率过低
+                    mylogger.warning(f"视频帧率过低: {avg_fps:.2f} fps")
+                elif avg_fps > 30:  # 如果帧率过高
+                    mylogger.warning(f"视频帧率过高: {avg_fps:.2f} fps")
+                    
                 self.framecount = 0
                 self.totaltime=0
         return frame
@@ -173,8 +196,11 @@ class HumanPlayer:
         self.__audio: Optional[PlayerStreamTrack] = None
         self.__video: Optional[PlayerStreamTrack] = None
 
-        self.__audio = PlayerStreamTrack(self, kind="audio")
-        self.__video = PlayerStreamTrack(self, kind="video")
+        # 获取推流质量配置
+        streaming_config = getattr(nerfreal, 'streaming_quality', {})
+        
+        self.__audio = PlayerStreamTrack(self, kind="audio", config=streaming_config)
+        self.__video = PlayerStreamTrack(self, kind="video", config=streaming_config)
 
         self.__container = nerfreal
 

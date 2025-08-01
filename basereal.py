@@ -105,6 +105,22 @@ class BaseReal:
         self.custom_opt = {}  # 自定义选项
         # 从配置文件读取自定义动作开关设置
         self.use_custom_silent = getattr(opt, 'use_custom_silent', True)
+        # 从配置文件读取静默时使用的动作类型（可以为空）
+        self.custom_silent_audiotype = getattr(opt, 'custom_silent_audiotype', "")
+        
+        # 读取推流质量配置
+        self.streaming_quality = getattr(opt, 'streaming_quality', {})
+        self.target_fps = self.streaming_quality.get('target_fps', 25.0)
+        self.max_video_queue_size = self.streaming_quality.get('max_video_queue_size', 8)
+        self.min_video_queue_size = self.streaming_quality.get('min_video_queue_size', 1)
+        self.quality_check_interval = self.streaming_quality.get('quality_check_interval', 50)
+        self.frame_drop_threshold = self.streaming_quality.get('frame_drop_threshold', 12)
+        self.enable_quality_monitoring = self.streaming_quality.get('enable_quality_monitoring', True)
+        self.enable_frame_rate_control = self.streaming_quality.get('enable_frame_rate_control', True)
+        self.enable_queue_management = self.streaming_quality.get('enable_queue_management', True)
+        
+        logger.info(f"推流质量配置: 目标帧率={self.target_fps}fps, 最大队列={self.max_video_queue_size}, 最小队列={self.min_video_queue_size}")
+        
         self.__loadcustom()
 
     def put_msg_txt(self,msg,eventpoint=None):
@@ -147,16 +163,50 @@ class BaseReal:
         return self.speaking
     
     def __loadcustom(self):
-        for item in self.opt.customopt:
-            logger.info(item)
-            input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
-            input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-            audiotype = item['audiotype']
-            self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
-            self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
-            self.custom_audio_index[audiotype] = 0
-            self.custom_index[audiotype] = 0
-            self.custom_opt[audiotype] = item
+        # 如果开启了静默自定义动作，只加载指定的动作
+        if self.use_custom_silent:
+            # 如果指定了具体的动作类型，只加载该动作
+            if self.custom_silent_audiotype:
+                target_audiotype = self.custom_silent_audiotype
+                for item in self.opt.customopt:
+                    if item['audiotype'] == target_audiotype:
+                        logger.info(f"加载指定静默动作: {item}")
+                        input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
+                        input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+                        self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
+                        self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
+                        self.custom_audio_index[audiotype] = 0
+                        self.custom_index[audiotype] = 0
+                        self.custom_opt[audiotype] = item
+                        logger.info(f"成功加载指定静默动作 audiotype={audiotype}")
+                        return
+                logger.warning(f"未找到指定的静默动作 audiotype={target_audiotype}")
+            # 如果没有指定动作类型，加载第一个可用动作
+            if self.opt.customopt:
+                item = self.opt.customopt[0]
+                logger.info(f"加载第一个可用静默动作: {item}")
+                input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
+                input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+                audiotype = item['audiotype']
+                self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
+                self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
+                self.custom_audio_index[audiotype] = 0
+                self.custom_index[audiotype] = 0
+                self.custom_opt[audiotype] = item
+                logger.info(f"成功加载第一个可用静默动作 audiotype={audiotype}")
+                return
+        else:
+            # 如果未开启静默自定义动作，加载所有动作（保持原有行为）
+            for item in self.opt.customopt:
+                logger.info(item)
+                input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
+                input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+                audiotype = item['audiotype']
+                self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
+                self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
+                self.custom_audio_index[audiotype] = 0
+                self.custom_index[audiotype] = 0
+                self.custom_opt[audiotype] = item
 
     def init_customindex(self):
         self.curr_state=0
@@ -317,9 +367,12 @@ class BaseReal:
 
     def get_default_silent_audiotype(self):
         """获取静音时的默认动作类型"""
-        # 如果开关开启，查找第一个可用的自定义动作
+        # 如果开关开启，查找可用的自定义动作
         if self.use_custom_silent and self.custom_index:
-            # 返回第一个可用的audiotype
+            # 如果指定了具体的动作类型，优先使用指定的
+            if self.custom_silent_audiotype and self.custom_silent_audiotype in self.custom_index:
+                return self.custom_silent_audiotype
+            # 否则返回第一个可用的audiotype
             return list(self.custom_index.keys())[0]
         # 否则返回1（静音状态）
         return 1
@@ -335,6 +388,19 @@ class BaseReal:
 
     def process_frames(self,quit_event,loop=None,audio_track=None,video_track=None):
         enable_transition = False  # 设置为False禁用过渡效果，True启用
+        
+        # 使用配置文件中的参数
+        target_fps = self.target_fps
+        frame_interval = 1.0 / target_fps
+        last_frame_time = time.perf_counter()
+        
+        # 使用配置文件中的队列管理参数
+        max_video_queue_size = self.max_video_queue_size
+        min_video_queue_size = self.min_video_queue_size
+        
+        # 使用配置文件中的质量监控参数
+        frame_count = 0
+        quality_check_interval = self.quality_check_interval
         
         if enable_transition:
             _last_speaking = False
@@ -361,6 +427,37 @@ class BaseReal:
             audio_thread.start()
         
         while not quit_event.is_set():
+            # 帧率控制 - 使用配置的目标帧率
+            if self.enable_frame_rate_control:
+                current_time = time.perf_counter()
+                elapsed = current_time - last_frame_time
+                if elapsed < frame_interval:
+                    time.sleep(frame_interval - elapsed)
+                last_frame_time = time.perf_counter()
+            
+            # 实时推流队列管理 - 使用配置的队列大小
+            if self.enable_queue_management and video_track and video_track._queue.qsize() > max_video_queue_size:
+                # 队列过大时，丢弃一些旧帧以保持实时性
+                try:
+                    drop_count = min(3, video_track._queue.qsize() - max_video_queue_size + 2)
+                    for _ in range(drop_count):
+                        if loop:
+                            # 使用线程安全的方式调用异步方法
+                            asyncio.run_coroutine_threadsafe(
+                                video_track._queue.get(), 
+                                loop
+                            )
+                        else:
+                            # 如果没有loop，使用同步方式
+                            try:
+                                video_track._queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                    logger.warning(f"视频队列过大({video_track._queue.qsize()})，丢弃{drop_count}帧")
+                except Exception as e:
+                    logger.warning(f"队列管理异常: {e}")
+                continue
+                
             try:
                 res_frame,idx,audio_frames = self.res_frame_queue.get(block=True, timeout=1)
             except queue.Empty:
@@ -426,16 +523,50 @@ class BaseReal:
                 else:
                     combine_frame = current_frame
 
-            cv2.putText(combine_frame, "LiveTalking", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (128,128,128), 1)
+            # 质量监控 - 使用配置的检查间隔
+            frame_count += 1
+            if self.enable_quality_monitoring and frame_count % quality_check_interval == 0:
+                if video_track:
+                    queue_size = video_track._queue.qsize()
+                    logger.info(f"实时推流质量监控 - 队列大小: {queue_size}, 帧计数: {frame_count}, 目标帧率: {target_fps}fps")
+                    
+                    # 队列过小时可能存在处理延迟
+                    if queue_size < min_video_queue_size:
+                        logger.warning("视频队列过小，可能存在处理延迟")
+
+            cv2.putText(combine_frame, "UNIMED", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (128,128,128), 1)
             if self.opt.transport=='virtualcam':
                 if vircam==None:
                     height, width,_= combine_frame.shape
                     vircam = pyvirtualcam.Camera(width=width, height=height, fps=25, fmt=pyvirtualcam.PixelFormat.BGR,print_fps=True)
                 vircam.send(combine_frame)
             else: #webrtc
+                # 实时推流优化：确保图像质量和传输稳定性
                 image = combine_frame
                 new_frame = VideoFrame.from_ndarray(image, format="bgr24")
-                asyncio.run_coroutine_threadsafe(video_track._queue.put((new_frame,None)), loop)
+                
+                # 添加帧时间戳以确保同步
+                new_frame.pts = int(frame_count * frame_interval * 90000)  # 90kHz时钟
+                new_frame.time_base = Fraction(1, 90000)
+                
+                # 推送到队列 - 使用线程安全的方式调用异步方法
+                if loop:
+                    asyncio.run_coroutine_threadsafe(
+                        video_track._queue.put((new_frame, None)), 
+                        loop
+                    )
+                else:
+                    # 如果没有loop，使用同步方式（不推荐，但作为fallback）
+                    try:
+                        video_track._queue.put_nowait((new_frame, None))
+                    except asyncio.QueueFull:
+                        # 队列满了，丢弃最旧的帧
+                        try:
+                            video_track._queue.get_nowait()
+                            video_track._queue.put_nowait((new_frame, None))
+                        except asyncio.QueueEmpty:
+                            pass
+                
             self.record_video_data(combine_frame)
 
             for audio_frame in audio_frames:
@@ -448,7 +579,23 @@ class BaseReal:
                     new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
                     new_frame.planes[0].update(frame.tobytes())
                     new_frame.sample_rate=16000
-                    asyncio.run_coroutine_threadsafe(audio_track._queue.put((new_frame,eventpoint)), loop)
+                    # 推送到音频队列 - 使用线程安全的方式调用异步方法
+                    if loop:
+                        asyncio.run_coroutine_threadsafe(
+                            audio_track._queue.put((new_frame, eventpoint)), 
+                            loop
+                        )
+                    else:
+                        # 如果没有loop，使用同步方式（不推荐，但作为fallback）
+                        try:
+                            audio_track._queue.put_nowait((new_frame, eventpoint))
+                        except asyncio.QueueFull:
+                            # 队列满了，丢弃最旧的帧
+                            try:
+                                audio_track._queue.get_nowait()
+                                audio_track._queue.put_nowait((new_frame, eventpoint))
+                            except asyncio.QueueEmpty:
+                                pass
                 self.record_audio_data(frame)
             if self.opt.transport=='virtualcam':
                 vircam.sleep_until_next_frame()

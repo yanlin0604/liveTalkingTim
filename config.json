@@ -5,44 +5,48 @@
   "H": 450,
   "listenport": 8010,
   "max_session": 1,
-
   "// 滑动窗口配置": "Sliding Window Configuration (unit: 20ms)",
   "l": 10,
   "m": 8,
   "r": 10,
-
   "// 数字人模型配置": "Digital Human Model Configuration",
   "model": "wav2lip",
   "avatar_id": "wav2lip384_avatar5",
-  "batch_size": 16,
+  "batch_size": 8,
   "auto_batch_size": false,
   "model_path": "./models/checkpoint_step000760000.pth",
   "wav2lip_model_size": "384",
-
   "// 颜色匹配配置": "Color Matching Configuration",
   "enable_color_matching": true,
   "color_matching_strength": 1.0,
-
   "// 自定义视频配置": "Custom Video Configuration",
   "customvideo_config": "data/custom_config.json",
   "use_custom_silent": true,
-
+  "custom_silent_audiotype": "",
   "// TTS语音合成配置": "Text-to-Speech Configuration",
   "tts": "doubao",
   "REF_FILE": "BV705_streaming",
   "REF_TEXT": null,
   "TTS_SERVER": "http://127.0.0.1:9880",
-
   "// LLM大语言模型配置": "Large Language Model Configuration",
   "llm_provider": "ollama",
   "llm_model": "qwen2:0.5b",
   "llm_system_prompt": "你是一个友善的中文助手",
   "ollama_host": "http://192.168.1.88:11434",
-
   "// 传输方式配置": "Transport Configuration",
   "transport": "webrtc",
   "push_url": "http://localhost:1985/rtc/v1/whip/?app=live&stream=livestream",
-
+  "// 实时推流质量配置": "Real-time Streaming Quality Configuration",
+  "streaming_quality": {
+    "target_fps": 25,
+    "max_video_queue_size": 6,
+    "min_video_queue_size": 2,
+    "quality_check_interval": 30,
+    "frame_drop_threshold": 8,
+    "enable_quality_monitoring": true,
+    "enable_frame_rate_control": true,
+    "enable_queue_management": true
+  },
   "// 参数说明": "Parameter Descriptions",
   "_descriptions": {
     "fps": "音频帧率，必须为50",
@@ -58,6 +62,7 @@
     "color_matching_strength": "颜色匹配强度（0.0-1.0，越高校正越强）",
     "customvideo_config": "自定义动作JSON配置文件路径",
     "use_custom_silent": "静音时是否自动使用自定义动作（true=开启，false=关闭）",
+    "custom_silent_audiotype": "静音时使用的具体动作类型（对应custom_config.json中的audiotype，留空则使用第一个可用动作）",
     "tts": "TTS服务类型（edgetts/xtts/gpt-sovits/cosyvoice）",
     "REF_FILE": "TTS参考文件或声音名称",
     "REF_TEXT": "TTS参考文本",
@@ -72,6 +77,16 @@
     "transport": "传输方式（webrtc/rtcpush/virtualcam）",
     "push_url": "推流地址",
     "max_session": "最大会话数量",
-    "listenport": "Web服务监听端口"
+    "listenport": "Web服务监听端口",
+    "streaming_quality": {
+      "target_fps": "目标视频帧率",
+      "max_video_queue_size": "最大视频队列大小",
+      "min_video_queue_size": "最小视频队列大小",
+      "quality_check_interval": "质量检查间隔",
+      "frame_drop_threshold": "帧丢弃阈值",
+      "enable_quality_monitoring": "启用质量监控",
+      "enable_frame_rate_control": "启用帧率控制",
+      "enable_queue_management": "启用队列管理"
+    }
   }
 }

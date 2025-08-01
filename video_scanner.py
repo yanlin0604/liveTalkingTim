@@ -248,12 +248,14 @@ class VideoScanner:
             logger.info(f"执行命令: {' '.join(cmd)}")
             
             # 执行训练
+            # 确保在项目根目录下执行，这样genavatar.py中的相对路径才能正确工作
+            project_root = Path.cwd()
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                cwd=Path.cwd()
+                cwd=project_root
             )
             
             if result.returncode == 0:

@@ -62,7 +62,31 @@ else:
         print(f'CUDA测试失败: {e}，使用CPU进行推理')
 
 # 初始化YOLO模型 - 始终在CPU上加载模型，需要时再转移到CUDA
-face_det = YOLO('../models/yolo/yolov8n-face.pt')
+# 使用绝对路径确保模型文件能被找到
+import os
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+yolo_model_path = os.path.join(project_root, 'models', 'yolo', 'yolov8n-face.pt')
+
+if not os.path.exists(yolo_model_path):
+    # 尝试其他可能的路径
+    alternative_paths = [
+        os.path.join(project_root, 'models', 'yolo', 'yolov8n-face.pt'),
+        os.path.join(os.getcwd(), 'models', 'yolo', 'yolov8n-face.pt'),
+        'models/yolo/yolov8n-face.pt',
+        '../models/yolo/yolov8n-face.pt',
+        '../../models/yolo/yolov8n-face.pt'
+    ]
+    
+    for path in alternative_paths:
+        if os.path.exists(path):
+            yolo_model_path = path
+            break
+    else:
+        raise FileNotFoundError(f"找不到YOLO模型文件。尝试过的路径: {alternative_paths}")
+
+print(f"使用YOLO模型文件: {yolo_model_path}")
+face_det = YOLO(yolo_model_path)
 if device == 'cpu':
     # 确保模型在CPU上
     face_det.to('cpu')

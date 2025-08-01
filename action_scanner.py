@@ -219,12 +219,14 @@ class ActionScanner:
             logger.info(f"执行命令: {' '.join(cmd)}")
             
             # 执行命令
+            # 确保在项目根目录下执行
+            project_root = Path(__file__).parent
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                cwd=Path(__file__).parent
+                cwd=project_root
             )
             
             if result.returncode == 0:

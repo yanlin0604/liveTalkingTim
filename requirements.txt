@@ -42,3 +42,7 @@ accelerate
 librosa
 openai
 websockets==12.0
+
+# Swagger文档相关依赖 (选择其中一个安装)
+# aiohttp-swagger3  # 推荐：支持OpenAPI 3.0，更现代
+aiohttp-swagger    # 备选：支持Swagger 2.0，更稳定
