@@ -1,6 +1,6 @@
 {
   "scan_directory": "videos",
-  "avatar_base_dir": "E://xxxxxx//bot//LiveTalking//data//avatars",
+  "avatar_base_dir": "E://xxxxxx//bot//Unimed//data//avatars",
   "scan_interval": 60,
   "video_extensions": [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv"],
   "video_prefix": "avatar_",

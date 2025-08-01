@@ -19,7 +19,7 @@ LOG_DIR="/mnt/disk1/ftp/data/60397193/logs"
 mkdir -p $LOG_DIR
 
 echo ">>> Starting start.py..."
-python /mnt/disk1/ftp/file/60397193/LiveTalking/start.py > $LOG_DIR/start.log 2>&1 &
+python /mnt/disk1/ftp/file/60397193/Unimed/start.py > $LOG_DIR/start.log 2>&1 &
 
 # 输出新进程 PID
 NEW_PID=$!

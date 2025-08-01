@@ -320,7 +320,7 @@ class TrainingAPI:
                         raise Exception("无效的URL格式")
                     
                     # 创建临时目录
-                    temp_dir = Path(tempfile.gettempdir()) / "livetalking_videos"
+                    temp_dir = Path(tempfile.gettempdir()) / "Unimed_videos"
                     temp_dir.mkdir(exist_ok=True)
                     
                     # 如果video_name为空或为"unknown"，则从URL中提取文件名

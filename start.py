@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-LiveTalking 快速启动脚本
+Unimed 快速启动脚本
 """
 
 import os
 import sys
 
 def main():
-    print("🚀 LiveTalking 快速启动")
+    print("🚀 Unimed 快速启动")
     print("=" * 40)
     
     # 检查必要文件

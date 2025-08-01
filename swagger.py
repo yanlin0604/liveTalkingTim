@@ -38,9 +38,9 @@ def create_swagger3_docs(app):
         swagger = SwaggerDocs(
             app,
             swagger_ui_settings=SwaggerUiSettings(path="/swagger"),
-            title="LiveTalking API",
+            title="AI数字人 API",
             version="1.0.0",
-            description="LiveTalking数字人实时对话系统API文档"
+            description="AI数字人实时对话系统API文档"
         )
         
         print("Swagger 3.0 documentation enabled at /swagger")
@@ -57,10 +57,10 @@ def create_swagger2_docs(app):
     setup_swagger(
         app,
         swagger_url="/swagger",
-        title="LiveTalking API",
-        description="LiveTalking数字人实时对话系统API文档",
+        title="Unimed API",
+        description="AI数字人实时对话系统API文档",
         api_version="1.0.0",
-        contact="lipku@foxmail.com"
+        contact="zengyanlin99@gmail.com"
     )
     
     print("Swagger 2.0 documentation enabled at /swagger")

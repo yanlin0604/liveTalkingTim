@@ -1,13 +1,13 @@
-# API package for LiveTalking
+# API package for Unimed
 """
-LiveTalking API Package
+Unimed API Package
 
-This package contains all API modules for the LiveTalking digital human system.
+This package contains all API modules for the Unimed digital human system.
 """
 
 __version__ = "1.0.0"
-__author__ = "LiveTalking Team"
-__email__ = "lipku@foxmail.com"
+__author__ = "Unmed Team"
+__email__ = "zengyanlin99@gmail.com"
 
 # 导入所有API类，方便外部直接使用
 from .webrtc import WebRTCAPI
@@ -29,4 +29,4 @@ __all__ = [
 # 包初始化时的日志
 import logging
 logger = logging.getLogger(__name__)
-logger.info(f"LiveTalking API Package v{__version__} initialized")
+logger.info(f"Unmed API Package v{__version__} initialized")

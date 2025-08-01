@@ -18,7 +18,7 @@ class AuthAPI:
     def __init__(self):
         # 存储有效的token和对应的uuid
         self.tokens: Dict[str, Dict] = {}  # token -> {uuid, created_time, expires_time}
-        self.token_secret = "LiveTalking_Token_Secret_2024"  # 用于签名验证的密钥
+        self.token_secret = "Unimed_Token_Secret_2025"  # 用于签名验证的密钥
         self.token_expire_hours = 24  # token有效期（小时）
         
         # IP白名单 - 写死在代码中

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LiveTalking 启动器
+Unimed 启动器
 支持运行时热更新配置，无需重启服务
 
 使用方法:
@@ -17,7 +17,7 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(
-        description='LiveTalking 启动器',
+        description='Unimed 启动器',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 特性:
@@ -62,7 +62,7 @@ def main():
         sys.exit(1)
     
     # 打印启动信息
-    print("🚀 LiveTalking 启动")
+    print("🚀 Unimed 启动")
     print("=" * 50)
     print(f"📁 配置文件: {args.config}")
     print(f"🎭 数字人界面: http://localhost:8010/dashboard.html")
@@ -89,7 +89,7 @@ def main():
 def create_default_config(config_path):
     """创建默认配置文件"""
     default_config = {
-        "// 配置文件": "LiveTalking Dynamic Configuration",
+        "// 配置文件": "Unimed Dynamic Configuration",
         "// 创建时间": "Auto-generated default config",
         
         "// 基础配置": "Basic Configuration",
