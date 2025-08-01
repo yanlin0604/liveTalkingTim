@@ -173,6 +173,7 @@ class BaseReal:
                         logger.info(f"加载指定静默动作: {item}")
                         input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
                         input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+                        audiotype = item['audiotype']
                         self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
                         self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
                         self.custom_audio_index[audiotype] = 0
