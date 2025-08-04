@@ -75,6 +75,35 @@ class DynamicConfig:
                     except Exception as e:
                         logger.error(f"配置回调执行失败 {key}: {e}")
     
+    def set_nested(self, key_path: str, value: Any, save: bool = True):
+        """设置嵌套配置值（支持点号分隔的键路径）"""
+        with self.lock:
+            keys = key_path.split('.')
+            current = self.config
+            
+            # 遍历到最后一个键的父级
+            for key in keys[:-1]:
+                if key not in current:
+                    current[key] = {}
+                current = current[key]
+            
+            # 获取旧值用于回调
+            old_value = current.get(keys[-1])
+            
+            # 设置最终值
+            current[keys[-1]] = value
+            
+            if save:
+                self.save_config()
+            
+            # 触发回调（使用完整路径作为键）
+            if key_path in self.callbacks and old_value != value:
+                for callback in self.callbacks[key_path]:
+                    try:
+                        callback(key_path, old_value, value)
+                    except Exception as e:
+                        logger.error(f"配置回调执行失败 {key_path}: {e}")
+    
     def save_config(self):
         """保存配置到文件"""
         try:
@@ -170,6 +199,10 @@ def get_config(key: str, default=None):
 def set_config(key: str, value: Any, save: bool = True):
     """设置配置值"""
     dynamic_config.set(key, value, save)
+
+def set_nested_config(key_path: str, value: Any, save: bool = True):
+    """设置嵌套配置值（支持点号分隔的键路径）"""
+    dynamic_config.set_nested(key_path, value, save)
 
 def register_config_callback(key: str, callback: Callable):
     """注册配置变化回调"""

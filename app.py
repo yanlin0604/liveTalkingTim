@@ -577,7 +577,6 @@ if __name__ == '__main__':
     # 配置管理接口
     appasync.router.add_get("/get_config", config_api.get_config_api)  # 获取当前配置
     appasync.router.add_post("/update_config", config_api.update_config_api)  # 更新配置参数
-    appasync.router.add_post("/save_config", config_api.save_config_api)  # 保存配置到文件
     appasync.router.add_post("/reset_config", config_api.reset_config_api)  # 重置配置
     
     # 鉴权接口
@@ -595,6 +594,7 @@ if __name__ == '__main__':
     create_swagger_docs(appasync)
     
     appasync.router.add_static('/',path='web')
+    appasync.router.add_static('/data',path='data')
 
     # Configure default CORS settings.
     cors = aiohttp_cors.setup(appasync, defaults={

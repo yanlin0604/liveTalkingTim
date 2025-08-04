@@ -4,7 +4,7 @@
 import json
 import os
 from aiohttp import web
-from dynamic_config import dynamic_config, get_config, set_config
+from dynamic_config import dynamic_config, get_config, set_config, set_nested_config
 from logger import logger
 
 
@@ -49,10 +49,10 @@ class ConfigAPI:
         """
         更新配置接口
         
-        功能：动态更新配置参数，支持单个和批量更新
+        功能：动态更新配置参数，支持单个和批量更新，并自动保存到文件
         方法：POST
         参数格式1（单个配置）：
-            - key: 配置参数名
+            - key: 配置参数名（支持点号分隔的嵌套路径，如 "streaming_quality.target_fps"）
             - value: 新的配置值
         参数格式2（批量配置）：
             - configs: 配置字典，格式为 {"key1": "value1", "key2": "value2", ...}
@@ -72,6 +72,10 @@ class ConfigAPI:
                 )
             
             params = await request.json()
+            
+            def update_nested_config(key_path, value):
+                """更新嵌套配置的辅助函数"""
+                set_nested_config(key_path, value, save=False)
             
             # 检查是否为批量更新模式
             if 'configs' in params:
@@ -95,7 +99,12 @@ class ConfigAPI:
                 updated_count = 0
                 for key, value in configs.items():
                     if key:  # 确保key不为空
-                        set_config(key, value, save=False)  # 先不保存，最后统一保存
+                        if '.' in key:
+                            # 嵌套配置更新
+                            update_nested_config(key, value)
+                        else:
+                            # 普通配置更新
+                            set_config(key, value, save=False)
                         updated_count += 1
                 
                 # 统一保存到文件
@@ -105,7 +114,7 @@ class ConfigAPI:
                     content_type="application/json",
                     text=json.dumps({
                         "success": True, 
-                        "message": f"批量更新了 {updated_count} 个配置项",
+                        "message": f"批量更新了 {updated_count} 个配置项并已保存",
                         "updated_count": updated_count
                     }, ensure_ascii=False),
                 )
@@ -122,12 +131,17 @@ class ConfigAPI:
                         status=400
                     )
                 
-                # 更新单个配置
-                set_config(key, value, save=True)
+                # 检查是否为嵌套配置更新
+                if '.' in key:
+                    # 嵌套配置更新
+                    set_nested_config(key, value, save=True)
+                else:
+                    # 普通配置更新
+                    set_config(key, value, save=True)
                 
                 return web.Response(
                     content_type="application/json",
-                    text=json.dumps({"success": True, "message": f"配置 {key} 已更新"}, ensure_ascii=False),
+                    text=json.dumps({"success": True, "message": f"配置 {key} 已更新并保存"}, ensure_ascii=False),
                 )
                 
         except json.JSONDecodeError as e:
@@ -138,30 +152,6 @@ class ConfigAPI:
             )
         except Exception as e:
             logger.exception('更新配置失败:')
-            return web.Response(
-                content_type="application/json",
-                text=json.dumps({"success": False, "message": str(e)}, ensure_ascii=False),
-                status=500
-            )
-
-    async def save_config_api(self, request):
-        """
-        保存配置到文件接口
-        
-        功能：将当前配置保存到配置文件
-        方法：POST
-        返回：
-            - success: 是否成功
-            - message: 状态消息
-        """
-        try:
-            dynamic_config.save_config()
-            return web.Response(
-                content_type="application/json",
-                text=json.dumps({"success": True, "message": "配置已保存"}, ensure_ascii=False),
-            )
-        except Exception as e:
-            logger.exception('保存配置失败:')
             return web.Response(
                 content_type="application/json",
                 text=json.dumps({"success": False, "message": str(e)}, ensure_ascii=False),
