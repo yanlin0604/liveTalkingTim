@@ -59,19 +59,13 @@ class TrainingAPI:
             
             # 根据训练类型生成最终名称，剔除前缀
             if train_type == 'avatar':
-                # 头像训练：剔除 avatar_ 前缀
-                if base_name.startswith('avatar_'):
-                    clean_base_name = base_name[7:]  # 去掉 "avatar_" (7个字符)
-                else:
-                    clean_base_name = base_name
+                # 头像训练
+                clean_base_name = base_name
                 unique_name = f"{clean_base_name}_{current_date}_{task_id}_avatar"
             else:  # action
                 # 动作训练：剔除 action_ 前缀
-                if base_name.startswith('action_'):
-                    clean_base_name = base_name[7:]  # 去掉 "action_" (7个字符)
-                else:
-                    clean_base_name = base_name
-                unique_name = f"{clean_base_name}_{current_date}_{task_id}_action"
+                clean_base_name = base_name
+                unique_name = f"{clean_base_name}_{current_date}_{task_id}"
             
             # 立即将生成的名称添加到内存中，避免并发冲突
             temp_task = TrainingTask(
