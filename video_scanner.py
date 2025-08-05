@@ -180,7 +180,7 @@ class VideoScanner:
         
         # 检查是否存在对应的头像目录
         video_name = video_path.stem
-        avatar_dir = self.avatar_base_dir / f"wav2lip_{video_name}"
+        avatar_dir = self.avatar_base_dir / f"{video_name}"
         
         if avatar_dir.exists():
             # 检查是否有必要的训练文件
@@ -205,7 +205,7 @@ class VideoScanner:
         video_name = video_path.stem
         # 清理文件名，移除特殊字符
         clean_name = "".join(c for c in video_name if c.isalnum() or c in ('-', '_'))
-        return f"wav2lip_{clean_name}"
+        return f"{clean_name}"
     
     def train_video(self, video_path: Path) -> bool:
         """训练视频"""

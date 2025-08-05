@@ -7,6 +7,8 @@ import time
 import uuid
 import urllib.parse
 import tempfile
+import random
+from datetime import datetime
 from pathlib import Path
 from aiohttp import web
 from logger import logger
@@ -43,6 +45,45 @@ class TrainingAPI:
     def generate_task_id(self) -> str:
         """生成任务ID"""
         return str(uuid.uuid4())
+    
+    def generate_unique_video_name(self, base_name: str, train_type: str = 'avatar', task_id: str = None) -> str:
+        """生成唯一的视频名称，格式为: base_name_日期_task_id_类型"""
+        # 使用线程锁确保并发安全
+        with self.training_tasks_lock:
+            # 获取当前日期
+            current_date = datetime.now().strftime("%Y%m%d")
+            
+            # 如果没有提供task_id，生成一个
+            if not task_id:
+                task_id = self.generate_task_id()
+            
+            # 根据训练类型生成最终名称，剔除前缀
+            if train_type == 'avatar':
+                # 头像训练：剔除 avatar_ 前缀
+                if base_name.startswith('avatar_'):
+                    clean_base_name = base_name[7:]  # 去掉 "avatar_" (7个字符)
+                else:
+                    clean_base_name = base_name
+                unique_name = f"{clean_base_name}_{current_date}_{task_id}_avatar"
+            else:  # action
+                # 动作训练：剔除 action_ 前缀
+                if base_name.startswith('action_'):
+                    clean_base_name = base_name[7:]  # 去掉 "action_" (7个字符)
+                else:
+                    clean_base_name = base_name
+                unique_name = f"{clean_base_name}_{current_date}_{task_id}_action"
+            
+            # 立即将生成的名称添加到内存中，避免并发冲突
+            temp_task = TrainingTask(
+                task_id=f"temp_{len(self.training_tasks)}",
+                video_name=unique_name,
+                video_url=None,
+                train_type=train_type,
+                force_retrain=False
+            )
+            self.training_tasks[temp_task.task_id] = temp_task
+            
+            return unique_name
     
     def safe_get_training_task(self, task_id: str):
         """安全获取训练任务"""
@@ -314,11 +355,22 @@ class TrainingAPI:
                             "message": f"任务正在处理中（状态：{existing_task.status}），请等待完成"
                         }, status=200)
             
+            # 生成唯一的视频名称
+            logger.info("开始生成唯一的视频名称")
+            if video_name:
+                # 如果提供了video_name，生成唯一名称
+                unique_video_name = self.generate_unique_video_name(video_name, train_type, task_id)
+                logger.info(f"原始视频名称: {video_name}, 生成的唯一名称: {unique_video_name}")
+            else:
+                # 如果没有提供video_name，使用默认名称
+                unique_video_name = self.generate_unique_video_name("video", train_type, task_id)
+                logger.info(f"未提供视频名称，使用默认名称: {unique_video_name}")
+            
             # 创建训练任务
             logger.info("开始创建训练任务对象")
             task = TrainingTask(
                 task_id=task_id,
-                video_name=video_name or "unknown",
+                video_name=unique_video_name,
                 video_url=video_url,
                 train_type=train_type,
                 force_retrain=force_retrain
@@ -330,7 +382,7 @@ class TrainingAPI:
             self.safe_set_training_task(task_id, task)
             logger.info(f"训练任务已保存到内存和文件: {task_id}")
             
-            logger.info(f"创建训练任务成功: {task_id}, 视频名称={video_name or 'unknown'}, URL={video_url or '本地文件'}, 类型={train_type}")
+            logger.info(f"创建训练任务成功: {task_id}, 视频名称={unique_video_name}, URL={video_url or '本地文件'}, 类型={train_type}")
             
             # 启动异步训练任务，添加异常处理
             logger.info("开始启动异步训练任务")
