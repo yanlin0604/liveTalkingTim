@@ -15,6 +15,7 @@ from .chat import ChatAPI
 from .config import ConfigAPI
 from .avatars import AvatarsAPI
 from .training import TrainingAPI, TrainingTask
+from .tts import TTSAPI
 
 # 定义包的公共接口
 __all__ = [
@@ -23,7 +24,8 @@ __all__ = [
     'ConfigAPI',
     'AvatarsAPI',
     'TrainingAPI',
-    'TrainingTask'
+    'TrainingTask',
+    'TTSAPI'
 ]
 
 # 包初始化时的日志

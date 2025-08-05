@@ -47,6 +47,7 @@ from api.config import ConfigAPI
 from api.avatars import AvatarsAPI
 from api.training import TrainingAPI, TrainingTask
 from api.auth import AuthAPI
+from api.tts import TTSAPI
 
 # 添加当前目录到Python路径，确保能找到swagger模块
 import sys
@@ -551,6 +552,7 @@ if __name__ == '__main__':
     avatars_api = AvatarsAPI()
     auth_api = AuthAPI()
     training_api = TrainingAPI(training_tasks, training_tasks_lock, auth_api)
+    tts_api = TTSAPI()
     
     # WebRTC相关接口
     appasync.router.add_post("/offer", webrtc_api.offer)  # WebRTC连接建立，处理SDP offer
@@ -589,6 +591,9 @@ if __name__ == '__main__':
     appasync.router.add_get("/training/progress/{task_id}", training_api.get_training_progress)  # 获取训练任务进度
     appasync.router.add_get("/training/tasks", training_api.list_training_tasks)  # 获取所有训练任务列表
     appasync.router.add_post("/training/cancel/{task_id}", training_api.cancel_training_task)  # 取消训练任务
+    
+    # TTS试听接口
+    appasync.router.add_post("/preview_tts", tts_api.preview_tts)  # TTS试听接口
     
     # 添加Swagger文档
     create_swagger_docs(appasync)
