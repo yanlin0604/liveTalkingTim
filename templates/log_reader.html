@@ -243,6 +243,36 @@
             color: #1565c0;
             font-weight: 600;
         }
+        
+        .realtime-controls {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .realtime-status {
+            font-weight: 600;
+            color: #856404;
+        }
+        
+        .realtime-line {
+            background: #e8f5e8;
+            border-left: 3px solid #28a745;
+            margin: 2px 0;
+            padding: 5px 10px;
+            border-radius: 3px;
+        }
+        
+        .realtime-timestamp {
+            color: #28a745;
+            font-weight: 600;
+            margin-right: 10px;
+        }
 
         @media (max-width: 768px) {
             .form-row {
@@ -304,6 +334,15 @@
                         <input type="checkbox" id="readAll">
                         <label for="readAll">读取全部内容</label>
                     </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="realTime">
+                        <label for="realTime">实时跟踪 (tail -f)</label>
+                    </div>
+                </div>
+                
+                <div id="realtimeOptions" class="form-group" style="display: none; margin-top: 15px;">
+                    <label for="interval">检查间隔 (秒)</label>
+                    <input type="number" id="interval" class="form-control" value="1.0" min="0.1" max="10" step="0.1">
                 </div>
             </form>
             
@@ -324,6 +363,11 @@
             </div>
             
             <div id="logOutput" class="log-output"></div>
+            
+            <div id="realtimeControls" class="realtime-controls" style="display: none;">
+                <button id="stopRealtime" class="btn btn-secondary">停止实时跟踪</button>
+                <span id="realtimeStatus" class="realtime-status">连接中...</span>
+            </div>
         </div>
     </div>
 
@@ -341,15 +385,44 @@
         const stats = document.getElementById('stats');
         const statsContent = document.getElementById('statsContent');
         const logOutput = document.getElementById('logOutput');
+        const realTimeCheckbox = document.getElementById('realTime');
+        const realtimeOptions = document.getElementById('realtimeOptions');
+        const intervalInput = document.getElementById('interval');
+        const realtimeControls = document.getElementById('realtimeControls');
+        const stopRealtimeBtn = document.getElementById('stopRealtime');
+        const realtimeStatus = document.getElementById('realtimeStatus');
+        
+        let currentSession = null;
+        let eventSource = null;
 
         // 读取全部内容时禁用行数输入
         readAllCheckbox.addEventListener('change', function() {
             numLinesInput.disabled = this.checked;
             if (this.checked) {
                 numLinesInput.style.opacity = '0.5';
+                realTimeCheckbox.checked = false;
+                realtimeOptions.style.display = 'none';
             } else {
                 numLinesInput.style.opacity = '1';
             }
+        });
+        
+        // 实时跟踪选项
+        realTimeCheckbox.addEventListener('change', function() {
+            if (this.checked) {
+                readAllCheckbox.checked = false;
+                numLinesInput.disabled = false;
+                numLinesInput.style.opacity = '1';
+                realtimeOptions.style.display = 'block';
+            } else {
+                realtimeOptions.style.display = 'none';
+                stopRealtime();
+            }
+        });
+        
+        // 停止实时跟踪
+        stopRealtimeBtn.addEventListener('click', function() {
+            stopRealtime();
         });
 
         // 显示提示信息
@@ -405,9 +478,17 @@
             const filePath = filePathInput.value.trim();
             const numLines = readAllCheckbox.checked ? -1 : parseInt(numLinesInput.value);
             const fromEnd = fromEndCheckbox.checked;
+            const isRealTime = realTimeCheckbox.checked;
+            const interval = parseFloat(intervalInput.value);
 
             if (!filePath) {
                 showAlert('请输入文件路径');
+                return;
+            }
+            
+            // 实时跟踪模式
+            if (isRealTime) {
+                startRealtime(filePath, interval, numLines);
                 return;
             }
 
@@ -477,6 +558,127 @@
                 showAlert('读取日志时出错: ' + error.message);
             }
         });
+        
+        // 启动实时跟踪
+        async function startRealtime(filePath, interval, initialLines) {
+            try {
+                // 停止之前的会话
+                stopRealtime();
+                
+                loading.style.display = 'block';
+                logOutput.style.display = 'none';
+                stats.style.display = 'none';
+                alert.style.display = 'none';
+                
+                const response = await fetch('/api/start_realtime', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        file_path: filePath,
+                        interval: interval,
+                        initial_lines: initialLines
+                    })
+                });
+                
+                const result = await response.json();
+                loading.style.display = 'none';
+                
+                if (result.success) {
+                    currentSession = result.session_id;
+                    
+                    // 显示文件信息
+                    fileInfoContent.innerHTML = `
+                        <div class="file-info-item"><strong>路径:</strong> ${result.file_info.path}</div>
+                        <div class="file-info-item"><strong>大小:</strong> ${formatFileSize(result.file_info.size)}</div>
+                        <div class="file-info-item"><strong>修改时间:</strong> ${result.file_info.modified}</div>
+                    `;
+                    fileInfo.style.display = 'block';
+                    
+                    // 显示初始内容
+                    if (result.initial_content.length > 0) {
+                        let output = '<div style="color: #666; margin-bottom: 10px;">最近的日志内容:</div>';
+                        result.initial_content.forEach((line, index) => {
+                            const lineNumber = index + 1;
+                            output += `<div class="log-line"><span class="log-line-number">${lineNumber}</span>${escapeHtml(line)}</div>`;
+                        });
+                        output += '<div style="color: #28a745; margin: 10px 0; font-weight: bold;">--- 实时日志 (新增内容) ---</div>';
+                        logOutput.innerHTML = output;
+                        logOutput.style.display = 'block';
+                    }
+                    
+                    // 显示控制面板
+                    realtimeStatus.textContent = '连接中...';
+                    realtimeControls.style.display = 'flex';
+                    
+                    // 建立EventSource连接
+                    const streamUrl = `/api/realtime_stream/${currentSession}?file_path=${encodeURIComponent(filePath)}&interval=${interval}`;
+                    eventSource = new EventSource(streamUrl);
+                    
+                    eventSource.onmessage = function(event) {
+                        try {
+                            const data = JSON.parse(event.data);
+                            
+                            if (data.type === 'connected') {
+                                realtimeStatus.textContent = '实时跟踪中...';
+                                realtimeStatus.style.color = '#28a745';
+                            } else if (data.type === 'log_line') {
+                                // 添加新行
+                                const newLine = document.createElement('div');
+                                newLine.className = 'realtime-line';
+                                newLine.innerHTML = `<span class="realtime-timestamp">[${data.timestamp}]</span>${escapeHtml(data.content)}`;
+                                logOutput.appendChild(newLine);
+                                
+                                // 自动滚动到底部
+                                logOutput.scrollTop = logOutput.scrollHeight;
+                            } else if (data.error) {
+                                showAlert(data.error);
+                                stopRealtime();
+                            }
+                        } catch (e) {
+                            console.error('解析实时数据出错:', e);
+                        }
+                    };
+                    
+                    eventSource.onerror = function(event) {
+                        console.error('EventSource错误:', event);
+                        realtimeStatus.textContent = '连接断开';
+                        realtimeStatus.style.color = '#dc3545';
+                        setTimeout(() => {
+                            if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
+                                showAlert('实时连接断开，正在重连...');
+                            }
+                        }, 1000);
+                    };
+                    
+                } else {
+                    showAlert(result.error);
+                }
+            } catch (error) {
+                loading.style.display = 'none';
+                showAlert('启动实时跟踪时出错: ' + error.message);
+            }
+        }
+        
+        // 停止实时跟踪
+        function stopRealtime() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            
+            if (currentSession) {
+                fetch(`/api/stop_realtime/${currentSession}`, {
+                    method: 'POST'
+                }).catch(e => console.error('停止实时跟踪出错:', e));
+                currentSession = null;
+            }
+            
+            realtimeControls.style.display = 'none';
+            realTimeCheckbox.checked = false;
+            realtimeOptions.style.display = 'none';
+        }
 
         // 格式化文件大小
         function formatFileSize(bytes) {

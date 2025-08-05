@@ -8,8 +8,10 @@ Log File Reader Script
 import os
 import sys
 import argparse
+import time
+import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Callable
 
 
 class LogReader:
@@ -118,6 +120,64 @@ class LogReader:
             'modified': stat.st_mtime,
             'exists': True
         }
+    
+    def tail_follow(self, callback: Callable[[str], None], interval: float = 1.0, stop_event: Optional[threading.Event] = None) -> None:
+        """
+        实时跟踪文件变化（类似tail -f）
+        
+        Args:
+            callback: 处理新行的回调函数
+            interval: 检查间隔（秒）
+            stop_event: 停止事件
+        """
+        if not self.validate_file():
+            return
+        
+        try:
+            with open(self.file_path, 'r', encoding='utf-8', errors='ignore') as file:
+                # 移动到文件末尾
+                file.seek(0, 2)
+                
+                while True:
+                    if stop_event and stop_event.is_set():
+                        break
+                        
+                    line = file.readline()
+                    if line:
+                        callback(line.rstrip('\n\r'))
+                    else:
+                        time.sleep(interval)
+                        
+        except UnicodeDecodeError:
+            try:
+                with open(self.file_path, 'r', encoding='gbk', errors='ignore') as file:
+                    file.seek(0, 2)
+                    
+                    while True:
+                        if stop_event and stop_event.is_set():
+                            break
+                            
+                        line = file.readline()
+                        if line:
+                            callback(line.rstrip('\n\r'))
+                        else:
+                            time.sleep(interval)
+            except Exception as e:
+                print(f"实时读取文件时出错: {e}")
+        except Exception as e:
+            print(f"实时读取文件时出错: {e}")
+    
+    def get_recent_lines(self, num_lines: int = 10) -> List[str]:
+        """
+        获取文件最近的几行（用于实时读取的初始显示）
+        
+        Args:
+            num_lines: 要获取的行数
+            
+        Returns:
+            List[str]: 最近的行列表
+        """
+        return self.read_lines(num_lines=num_lines, from_end=True)
 
 
 def main():
@@ -163,6 +223,19 @@ def main():
         help='显示文件信息'
     )
     
+    parser.add_argument(
+        '-f', '--follow',
+        action='store_true',
+        help='实时跟踪文件变化（类似tail -f）'
+    )
+    
+    parser.add_argument(
+        '--interval',
+        type=float,
+        default=1.0,
+        help='实时读取检查间隔（秒，默认1.0）'
+    )
+    
     args = parser.parse_args()
     
     # 创建日志读取器
@@ -177,7 +250,50 @@ def main():
             print(f"修改时间: {info['modified']}")
             print("-" * 50)
     
-    # 读取日志内容
+    # 实时跟踪模式
+    if args.follow:
+        print(f"开始实时跟踪文件: {args.file_path}")
+        print(f"检查间隔: {args.interval} 秒")
+        print("按 Ctrl+C 停止跟踪")
+        print("=" * 80)
+        
+        # 先显示最近的几行作为上下文
+        recent_lines = reader.get_recent_lines(args.lines)
+        if recent_lines:
+            print("最近的日志内容:")
+            for i, line in enumerate(recent_lines, 1):
+                print(f"{i:4d}: {line}")
+            print("-" * 80)
+            print("实时日志 (新增内容):")
+        
+        # 创建停止事件
+        stop_event = threading.Event()
+        
+        def print_new_line(line: str):
+            timestamp = time.strftime("%H:%M:%S")
+            print(f"[{timestamp}] {line}")
+        
+        # 启动实时跟踪线程
+        follow_thread = threading.Thread(
+            target=reader.tail_follow,
+            args=(print_new_line, args.interval, stop_event)
+        )
+        follow_thread.daemon = True
+        follow_thread.start()
+        
+        try:
+            # 主线程等待用户中断
+            while follow_thread.is_alive():
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            print("\n停止实时跟踪...")
+            stop_event.set()
+            follow_thread.join(timeout=2)
+            print("已停止")
+        
+        return
+    
+    # 普通读取模式
     if args.all:
         lines = reader.read_lines(num_lines=None)
         print(f"读取全部内容 ({len(lines)} 行):")
