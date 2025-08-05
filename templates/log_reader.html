@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>日志文件读取器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+            font-size: 1.1em;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #4facfe;
+            box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 20px;
+            align-items: end;
+        }
+
+        .form-col {
+            flex: 1;
+        }
+
+        .form-col-auto {
+            flex: 0 0 auto;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(79, 172, 254, 0.3);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+
+        .checkbox-group {
+            display: flex;
+            gap: 30px;
+            margin-top: 15px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #4facfe;
+        }
+
+        .file-info {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 25px;
+            border-left: 4px solid #4facfe;
+            display: none;
+        }
+
+        .file-info h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .file-info-item {
+            margin-bottom: 8px;
+            color: #666;
+        }
+
+        .log-output {
+            background: #1e1e1e;
+            color: #f8f8f2;
+            border-radius: 8px;
+            padding: 20px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            max-height: 600px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            display: none;
+        }
+
+        .log-line {
+            margin-bottom: 2px;
+            padding: 2px 0;
+        }
+
+        .log-line-number {
+            color: #6272a4;
+            margin-right: 15px;
+            user-select: none;
+            display: inline-block;
+            width: 50px;
+            text-align: right;
+        }
+
+        .alert {
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4facfe;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .stats {
+            background: #e3f2fd;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .stats-item {
+            display: inline-block;
+            margin-right: 30px;
+            color: #1565c0;
+            font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .checkbox-group {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📄 日志文件读取器</h1>
+            <p>支持自定义路径和行数的日志文件查看工具</p>
+        </div>
+        
+        <div class="content">
+            <form id="logForm">
+                <div class="form-group">
+                    <label for="filePath">文件路径</label>
+                    <input type="text" id="filePath" class="form-control" 
+                           placeholder="例如: /mnt/disk1/ftp/data/60397193/logs/start.log"
+                           value="/mnt/disk1/ftp/data/60397193/logs/start.log">
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-col">
+                        <label for="numLines">读取行数</label>
+                        <input type="number" id="numLines" class="form-control" 
+                               value="50" min="1" max="10000">
+                    </div>
+                    <div class="form-col-auto">
+                        <button type="button" id="validateBtn" class="btn btn-secondary">验证路径</button>
+                    </div>
+                    <div class="form-col-auto">
+                        <button type="submit" class="btn btn-primary">读取日志</button>
+                    </div>
+                </div>
+                
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="fromEnd" checked>
+                        <label for="fromEnd">从文件末尾读取</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="readAll">
+                        <label for="readAll">读取全部内容</label>
+                    </div>
+                </div>
+            </form>
+            
+            <div id="alert" class="alert"></div>
+            
+            <div id="fileInfo" class="file-info">
+                <h3>📁 文件信息</h3>
+                <div id="fileInfoContent"></div>
+            </div>
+            
+            <div id="loading" class="loading">
+                <div class="spinner"></div>
+                <p>正在读取日志文件...</p>
+            </div>
+            
+            <div id="stats" class="stats">
+                <span id="statsContent"></span>
+            </div>
+            
+            <div id="logOutput" class="log-output"></div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('logForm');
+        const filePathInput = document.getElementById('filePath');
+        const numLinesInput = document.getElementById('numLines');
+        const fromEndCheckbox = document.getElementById('fromEnd');
+        const readAllCheckbox = document.getElementById('readAll');
+        const validateBtn = document.getElementById('validateBtn');
+        const alert = document.getElementById('alert');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileInfoContent = document.getElementById('fileInfoContent');
+        const loading = document.getElementById('loading');
+        const stats = document.getElementById('stats');
+        const statsContent = document.getElementById('statsContent');
+        const logOutput = document.getElementById('logOutput');
+
+        // 读取全部内容时禁用行数输入
+        readAllCheckbox.addEventListener('change', function() {
+            numLinesInput.disabled = this.checked;
+            if (this.checked) {
+                numLinesInput.style.opacity = '0.5';
+            } else {
+                numLinesInput.style.opacity = '1';
+            }
+        });
+
+        // 显示提示信息
+        function showAlert(message, type = 'error') {
+            alert.textContent = message;
+            alert.className = `alert alert-${type}`;
+            alert.style.display = 'block';
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 5000);
+        }
+
+        // 验证文件路径
+        validateBtn.addEventListener('click', async function() {
+            const filePath = filePathInput.value.trim();
+            if (!filePath) {
+                showAlert('请输入文件路径');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/validate_path', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+
+                const result = await response.json();
+                
+                if (result.valid) {
+                    showAlert('文件路径有效', 'success');
+                    fileInfoContent.innerHTML = `
+                        <div class="file-info-item"><strong>路径:</strong> ${filePath}</div>
+                        <div class="file-info-item"><strong>大小:</strong> ${formatFileSize(result.info.size)}</div>
+                        <div class="file-info-item"><strong>修改时间:</strong> ${result.info.modified}</div>
+                    `;
+                    fileInfo.style.display = 'block';
+                } else {
+                    showAlert(result.error);
+                    fileInfo.style.display = 'none';
+                }
+            } catch (error) {
+                showAlert('验证路径时出错: ' + error.message);
+            }
+        });
+
+        // 提交表单
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const filePath = filePathInput.value.trim();
+            const numLines = readAllCheckbox.checked ? -1 : parseInt(numLinesInput.value);
+            const fromEnd = fromEndCheckbox.checked;
+
+            if (!filePath) {
+                showAlert('请输入文件路径');
+                return;
+            }
+
+            // 显示加载状态
+            loading.style.display = 'block';
+            logOutput.style.display = 'none';
+            stats.style.display = 'none';
+            alert.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/read_log', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        file_path: filePath,
+                        num_lines: numLines,
+                        from_end: fromEnd
+                    })
+                });
+
+                const result = await response.json();
+                
+                loading.style.display = 'none';
+
+                if (result.success) {
+                    const data = result.data;
+                    
+                    // 显示文件信息
+                    fileInfoContent.innerHTML = `
+                        <div class="file-info-item"><strong>路径:</strong> ${data.file_info.path}</div>
+                        <div class="file-info-item"><strong>大小:</strong> ${formatFileSize(data.file_info.size)}</div>
+                        <div class="file-info-item"><strong>修改时间:</strong> ${data.file_info.modified}</div>
+                    `;
+                    fileInfo.style.display = 'block';
+
+                    // 显示统计信息
+                    const readType = readAllCheckbox.checked ? '全部内容' : (fromEnd ? '末尾' : '开头');
+                    statsContent.innerHTML = `
+                        <span class="stats-item">📊 读取方式: ${readType}</span>
+                        <span class="stats-item">📝 显示行数: ${data.total_lines}</span>
+                        <span class="stats-item">📅 读取时间: ${new Date().toLocaleString()}</span>
+                    `;
+                    stats.style.display = 'block';
+
+                    // 显示日志内容
+                    if (data.lines.length > 0) {
+                        let output = '';
+                        data.lines.forEach((line, index) => {
+                            const lineNumber = index + 1;
+                            output += `<div class="log-line"><span class="log-line-number">${lineNumber}</span>${escapeHtml(line)}</div>`;
+                        });
+                        logOutput.innerHTML = output;
+                        logOutput.style.display = 'block';
+                        
+                        // 滚动到顶部
+                        logOutput.scrollTop = 0;
+                    } else {
+                        showAlert('文件为空或没有读取到任何内容', 'success');
+                    }
+                } else {
+                    showAlert(result.error);
+                }
+            } catch (error) {
+                loading.style.display = 'none';
+                showAlert('读取日志时出错: ' + error.message);
+            }
+        });
+
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // HTML转义
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
