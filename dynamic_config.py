@@ -58,6 +58,20 @@ class DynamicConfig:
         with self.lock:
             return self.config.get(key, default)
     
+    def get_nested(self, key_path: str, default=None):
+        """获取嵌套配置值（支持点号分隔的键路径）"""
+        with self.lock:
+            keys = key_path.split('.')
+            current = self.config
+            
+            for key in keys:
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
+                else:
+                    return default
+            
+            return current
+    
     def set(self, key: str, value: Any, save: bool = True):
         """设置配置值"""
         with self.lock:
@@ -195,6 +209,10 @@ dynamic_config = DynamicConfig()
 def get_config(key: str, default=None):
     """获取配置值"""
     return dynamic_config.get(key, default)
+
+def get_nested_config(key_path: str, default=None):
+    """获取嵌套配置值（支持点号分隔的键路径）"""
+    return dynamic_config.get_nested(key_path, default)
 
 def set_config(key: str, value: Any, save: bool = True):
     """设置配置值"""

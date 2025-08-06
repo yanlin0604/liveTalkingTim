@@ -120,8 +120,17 @@ def randN(N)->int:
     return random.randint(min, max - 1)
 
 def build_nerfreal(sessionid:int)->BaseReal:
+    print(f"=== 开始构建nerfreal，sessionid={sessionid} ===")
+    print(f"opt.model = {opt.model}")
+    print(f"opt.tts = {opt.tts}")
+    
+    logger.info(f"=== 开始构建nerfreal，sessionid={sessionid} ===")
+    logger.info(f"opt.model = {opt.model}")
+    logger.info(f"opt.tts = {opt.tts}")
+    
     opt.sessionid=sessionid
     if opt.model == 'wav2lip':
+        logger.info("使用wav2lip模型")
         from lipreal import LipReal
         nerfreal = LipReal(opt,model,avatar)
         # 为新会话预热模型，确保推理稳定性
@@ -131,14 +140,21 @@ def build_nerfreal(sessionid:int)->BaseReal:
         warm_up(opt.batch_size, model, model_res)
         logger.info(f"会话 {sessionid} 模型预热完成")
     elif opt.model == 'musetalk':
+        logger.info("使用musetalk模型")
         from musereal import MuseReal
         nerfreal = MuseReal(opt,model,avatar)
     # elif opt.model == 'ernerf':
     #     from nerfreal import NeRFReal
     #     nerfreal = NeRFReal(opt,model,avatar)
     elif opt.model == 'ultralight':
+        logger.info("使用ultralight模型")
         from lightreal import LightReal
         nerfreal = LightReal(opt,model,avatar)
+    else:
+        logger.error(f"未知的模型类型: {opt.model}")
+        return None
+        
+    logger.info(f"=== nerfreal构建完成，sessionid={sessionid} ===")
     return nerfreal
 
 async def on_shutdown(app):
@@ -156,8 +172,24 @@ async def post(url,data):
         logger.info(f'Error: {e}')
 
 async def run(push_url,sessionid):
-    nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal,sessionid)
-    nerfreals[sessionid] = nerfreal
+    logger.info(f"=== 开始run函数，sessionid={sessionid} ===")
+    logger.info(f"push_url: {push_url}")
+    
+    try:
+        logger.info("调用build_nerfreal...")
+        nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal,sessionid)
+        logger.info(f"build_nerfreal返回: {type(nerfreal)}")
+        
+        if nerfreal is None:
+            logger.error("build_nerfreal返回None，无法继续")
+            return
+            
+        nerfreals[sessionid] = nerfreal
+        logger.info(f"nerfreal已添加到nerfreals字典，sessionid={sessionid}")
+    except Exception as e:
+        logger.error(f"run函数异常: {e}")
+        logger.exception("run函数详细异常信息")
+        return
 
     pc = RTCPeerConnection()
     pcs.add(pc)

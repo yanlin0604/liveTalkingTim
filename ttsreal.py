@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from basereal import BaseReal
 
 from logger import logger
+from dynamic_config import get_config, get_nested_config
 class State(Enum):
     RUNNING=0
     PAUSE=1
@@ -542,16 +543,25 @@ class TencentTTS(BaseTTS):
 class DoubaoTTS(BaseTTS):
     def __init__(self, opt, parent):
         super().__init__(opt, parent)
-        # 从配置中读取豆包TTS参数
-        self.appid = getattr(opt, 'DOUBAO_APPID', "")
-        self.token = getattr(opt, 'DOUBAO_TOKEN', "")
+
+        print(f"opt: {opt}")
+        logger.info(f"opt: {opt}")
         
-        # 从配置中读取音频参数
-        doubao_audio_config = getattr(opt, 'doubao_audio', {})
-        self.speed_ratio = doubao_audio_config.get('speed_ratio', 0.8)
-        self.volume_ratio = doubao_audio_config.get('volume_ratio', 1.0)
-        self.pitch_ratio = doubao_audio_config.get('pitch_ratio', 1.0)
+        # 从动态配置中读取豆包TTS参数
+        self.appid = get_config('DOUBAO_APPID', "")
+        self.token = get_config('DOUBAO_TOKEN', "")
         
+        # 打印日志参数
+        print(f"豆包TTS参数: appid={self.appid}, token={self.token}")
+        logger.info(f"豆包TTS参数: appid={self.appid}, token={self.token}")
+        
+        # 从动态配置中读取音频参数
+        self.speed_ratio = get_nested_config('doubao_audio.speed_ratio', 0.8)
+        self.volume_ratio = get_nested_config('doubao_audio.volume_ratio', 1.0)
+        self.pitch_ratio = get_nested_config('doubao_audio.pitch_ratio', 1.0)
+        # 打印日志参数
+        logger.info(f"豆包TTS参数: speed_ratio={self.speed_ratio}, volume_ratio={self.volume_ratio}, pitch_ratio={self.pitch_ratio}")
+
         _cluster = 'volcano_tts'
         _host = "openspeech.bytedance.com"
         self.api_url = f"wss://{_host}/api/v1/tts/ws_binary"
@@ -583,7 +593,7 @@ class DoubaoTTS(BaseTTS):
 
     async def doubao_voice(self, text): # -> Iterator[bytes]:
         start = time.perf_counter()
-        voice_type = self.opt.REF_FILE
+        voice_type = get_config('REF_FILE', '')
 
         logger.info(f"=== 豆包TTS开始 ===")
         logger.info(f"输入文本: {text}")

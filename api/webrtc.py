@@ -14,48 +14,48 @@ from webrtc import HumanPlayer
 from logger import logger
 
 # 配置aiortc模块的详细日志
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# logging.basicConfig(
+#     level=logging.DEBUG,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# )
 
 # 启用aiortc相关模块的详细日志
-aiortc_logger = logging.getLogger('aiortc')
-aiortc_logger.setLevel(logging.DEBUG)
+# aiortc_logger = logging.getLogger('aiortc')
+# aiortc_logger.setLevel(logging.DEBUG)
 
 # 启用其他相关模块的日志
-rtp_logger = logging.getLogger('aiortc.rtcrtpsender')
-rtp_logger.setLevel(logging.DEBUG)
+# rtp_logger = logging.getLogger('aiortc.rtcrtpsender')
+# rtp_logger.setLevel(logging.DEBUG)
 
-rtp_receiver_logger = logging.getLogger('aiortc.rtcrtpreceiver')
-rtp_receiver_logger.setLevel(logging.DEBUG)
+# rtp_receiver_logger = logging.getLogger('aiortc.rtcrtpreceiver')
+# rtp_receiver_logger.setLevel(logging.DEBUG)
 
-connection_logger = logging.getLogger('aiortc.rtcicetransport')
-connection_logger.setLevel(logging.DEBUG)
+# connection_logger = logging.getLogger('aiortc.rtcicetransport')
+# connection_logger.setLevel(logging.DEBUG)
 
-dtls_logger = logging.getLogger('aiortc.rtcdtlstransport')
-dtls_logger.setLevel(logging.DEBUG)
+# dtls_logger = logging.getLogger('aiortc.rtcdtlstransport')
+# dtls_logger.setLevel(logging.DEBUG)
 
-sctp_logger = logging.getLogger('aiortc.rtcsctptransport')
-sctp_logger.setLevel(logging.DEBUG)
+# sctp_logger = logging.getLogger('aiortc.rtcsctptransport')
+# sctp_logger.setLevel(logging.DEBUG)
 
-peer_connection_logger = logging.getLogger('aiortc.rtcpeerconnection')
-peer_connection_logger.setLevel(logging.DEBUG)
+# peer_connection_logger = logging.getLogger('aiortc.rtcpeerconnection')
+# peer_connection_logger.setLevel(logging.DEBUG)
 
 # 启用更多相关模块的日志
-media_logger = logging.getLogger('aiortc.mediastreams')
-media_logger.setLevel(logging.DEBUG)
+# media_logger = logging.getLogger('aiortc.mediastreams')
+# media_logger.setLevel(logging.DEBUG)
 
-codec_logger = logging.getLogger('aiortc.codecs')
-codec_logger.setLevel(logging.DEBUG)
+# codec_logger = logging.getLogger('aiortc.codecs')
+# codec_logger.setLevel(logging.DEBUG)
 
 # 启用av库的日志（用于音视频处理）
-av_logger = logging.getLogger('av')
-av_logger.setLevel(logging.INFO)  # 设置为INFO级别避免过于详细
+# av_logger = logging.getLogger('av')
+# av_logger.setLevel(logging.INFO)  # 设置为INFO级别避免过于详细
 
 # 启用asyncio的日志（用于异步操作）
-asyncio_logger = logging.getLogger('asyncio')
-asyncio_logger.setLevel(logging.DEBUG)
+# asyncio_logger = logging.getLogger('asyncio')
+# asyncio_logger.setLevel(logging.DEBUG)
 
 # 添加日志输出说明
 logger.info("=== aiortc API日志已启用 ===")

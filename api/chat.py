@@ -69,6 +69,7 @@ class ChatAPI:
                   description: 状态消息
         """
         try:
+            logger.info("🌐 === 收到用户消息请求 ===")
             # 检查请求体是否为空
             body = await request.text()
             if not body.strip():
@@ -103,6 +104,7 @@ class ChatAPI:
             # 使用锁保护访问
             with self.nerfreals_lock:
                 if sessionid not in self.nerfreals:
+                    logger.error(f"❌ 会话 {sessionid} 未找到")
                     return web.Response(
                         content_type="application/json",
                         text=json.dumps(
@@ -111,15 +113,20 @@ class ChatAPI:
                     )
                 
                 nerfreal = self.nerfreals[sessionid]
+                logger.info(f"✅ 找到会话 {sessionid}")
                 
                 if params.get('interrupt'):
+                    logger.info(f"🛑 用户请求打断当前对话")
                     nerfreal.flush_talk()
 
                 if params['type'] == 'echo':
+                    logger.info(f"📢 直接播报模式: '{params['text'][:50]}{'...' if len(params['text']) > 50 else ''}'")
                     nerfreal.put_msg_txt(params['text'])
                 elif params['type'] == 'chat':
+                    logger.info(f"💬 AI对话模式: '{params['text'][:50]}{'...' if len(params['text']) > 50 else ''}'")
                     asyncio.get_event_loop().run_in_executor(None, llm_response, params['text'], nerfreal)
                 else:
+                    logger.error(f"❌ 无效的消息类型: {params['type']}")
                     return web.Response(
                         content_type="application/json",
                         text=json.dumps(
@@ -127,6 +134,7 @@ class ChatAPI:
                         ),
                     )
 
+            logger.info("✅ 用户消息处理成功")
             return web.Response(
                 content_type="application/json",
                 text=json.dumps(

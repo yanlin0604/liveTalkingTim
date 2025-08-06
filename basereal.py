@@ -73,21 +73,47 @@ class BaseReal:
         self.sample_rate = 16000
         self.chunk = self.sample_rate // opt.fps # 320 samples per chunk (20ms * 16000 / 1000)
         self.sessionid = self.opt.sessionid
-
-        if opt.tts == "edgetts":
-            self.tts = EdgeTTS(opt,self)
-        elif opt.tts == "gpt-sovits":
-            self.tts = SovitsTTS(opt,self)
-        elif opt.tts == "xtts":
-            self.tts = XTTS(opt,self)
-        elif opt.tts == "cosyvoice":
-            self.tts = CosyVoiceTTS(opt,self)
-        elif opt.tts == "fishtts":
-            self.tts = FishTTS(opt,self)
-        elif opt.tts == "tencent":
-            self.tts = TencentTTS(opt,self)
-        elif opt.tts == "doubao":
-            self.tts = DoubaoTTS(opt,self)
+        
+        print(f"=== BaseReal初始化TTS ===")
+        print(f"opt.tts = {opt.tts}")
+        print(f"opt对象: {opt}")
+        
+        logger.info(f"=== BaseReal初始化TTS ===")
+        logger.info(f"opt.tts = {opt.tts}")
+        logger.info(f"opt对象: {opt}")
+        
+        try:
+            if opt.tts == "edgetts":
+                logger.info("初始化EdgeTTS")
+                self.tts = EdgeTTS(opt,self)
+            elif opt.tts == "gpt-sovits":
+                logger.info("初始化SovitsTTS")
+                self.tts = SovitsTTS(opt,self)
+            elif opt.tts == "xtts":
+                logger.info("初始化XTTS")
+                self.tts = XTTS(opt,self)
+            elif opt.tts == "cosyvoice":
+                logger.info("初始化CosyVoiceTTS")
+                self.tts = CosyVoiceTTS(opt,self)
+            elif opt.tts == "fishtts":
+                logger.info("初始化FishTTS")
+                self.tts = FishTTS(opt,self)
+            elif opt.tts == "tencent":
+                logger.info("初始化TencentTTS")
+                self.tts = TencentTTS(opt,self)
+            elif opt.tts == "doubao":
+                logger.info("初始化DoubaoTTS")
+                self.tts = DoubaoTTS(opt,self)
+            else:
+                logger.error(f"未知的TTS类型: {opt.tts}")
+                logger.error("可用的TTS类型: edgetts, gpt-sovits, xtts, cosyvoice, fishtts, tencent, doubao")
+                raise ValueError(f"未知的TTS类型: {opt.tts}")
+                
+            logger.info(f"TTS初始化成功: {type(self.tts).__name__}")
+        except Exception as e:
+            logger.error(f"TTS初始化失败: {e}")
+            logger.exception("TTS初始化异常详情")
+            raise
         
         self.speaking = False
 

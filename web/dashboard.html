@@ -1032,7 +1032,7 @@
             // 页面加载时显示配置信息
             $(document).ready(function() {
                 // 从配置文件获取默认设置
-                fetch('/get_config_for_frontend')
+                fetch('http://192.168.2.43:8011/get_config_for_frontend')
                     .then(response => response.json())
                     .then(data => {
                         if (data.code === 0) {
@@ -1066,7 +1066,7 @@
 
             // 加载可用的静默动作列表
             function loadSilentActions() {
-                return fetch('/get_actions')
+                return fetch('http://192.168.2.43:8011/get_actions')
                     .then(response => response.json())
                     .then(data => {
                         if (data.code === 0) {

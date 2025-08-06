@@ -41,66 +41,66 @@ from aiortc import (
 )
 
 # 配置aiortc模块的详细日志
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# logging.basicConfig(
+#     level=logging.DEBUG,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# )
 
 # 启用aiortc相关模块的详细日志
-aiortc_logger = logging.getLogger('aiortc')
-aiortc_logger.setLevel(logging.DEBUG)
+# aiortc_logger = logging.getLogger('aiortc')
+# aiortc_logger.setLevel(logging.DEBUG)
 
 # 启用其他相关模块的日志
-rtp_logger = logging.getLogger('aiortc.rtcrtpsender')
-rtp_logger.setLevel(logging.DEBUG)
+# rtp_logger = logging.getLogger('aiortc.rtcrtpsender')
+# rtp_logger.setLevel(logging.DEBUG)
 
-rtp_receiver_logger = logging.getLogger('aiortc.rtcrtpreceiver')
-rtp_receiver_logger.setLevel(logging.DEBUG)
+# rtp_receiver_logger = logging.getLogger('aiortc.rtcrtpreceiver')
+# rtp_receiver_logger.setLevel(logging.DEBUG)
 
-connection_logger = logging.getLogger('aiortc.rtcicetransport')
-connection_logger.setLevel(logging.DEBUG)
+# connection_logger = logging.getLogger('aiortc.rtcicetransport')
+# connection_logger.setLevel(logging.DEBUG)
 
-dtls_logger = logging.getLogger('aiortc.rtcdtlstransport')
-dtls_logger.setLevel(logging.DEBUG)
+# dtls_logger = logging.getLogger('aiortc.rtcdtlstransport')
+# dtls_logger.setLevel(logging.DEBUG)
 
-sctp_logger = logging.getLogger('aiortc.rtcsctptransport')
-sctp_logger.setLevel(logging.DEBUG)
+# sctp_logger = logging.getLogger('aiortc.rtcsctptransport')
+# sctp_logger.setLevel(logging.DEBUG)
 
-peer_connection_logger = logging.getLogger('aiortc.rtcpeerconnection')
-peer_connection_logger.setLevel(logging.DEBUG)
+# peer_connection_logger = logging.getLogger('aiortc.rtcpeerconnection')
+# peer_connection_logger.setLevel(logging.DEBUG)
 
 # 启用更多相关模块的日志
-media_logger = logging.getLogger('aiortc.mediastreams')
-media_logger.setLevel(logging.DEBUG)
+# media_logger = logging.getLogger('aiortc.mediastreams')
+# media_logger.setLevel(logging.DEBUG)
 
-codec_logger = logging.getLogger('aiortc.codecs')
-codec_logger.setLevel(logging.DEBUG)
+# codec_logger = logging.getLogger('aiortc.codecs')
+# codec_logger.setLevel(logging.DEBUG)
 
 # 启用av库的日志（用于音视频处理）
-av_logger = logging.getLogger('av')
-av_logger.setLevel(logging.INFO)  # 设置为INFO级别避免过于详细
+# av_logger = logging.getLogger('av')
+# av_logger.setLevel(logging.INFO)  # 设置为INFO级别避免过于详细
 
 # 启用asyncio的日志（用于异步操作）
-asyncio_logger = logging.getLogger('asyncio')
-asyncio_logger.setLevel(logging.DEBUG)
+# asyncio_logger = logging.getLogger('asyncio')
+# asyncio_logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 from logger import logger as mylogger
 
 # 添加日志输出说明
-mylogger.info("=== aiortc日志已启用 ===")
-mylogger.info("日志级别: DEBUG")
-mylogger.info("将输出以下模块的详细信息:")
-mylogger.info("- aiortc: 核心WebRTC功能")
-mylogger.info("- aiortc.rtcrtpsender: RTP发送器")
-mylogger.info("- aiortc.rtcrtpreceiver: RTP接收器") 
-mylogger.info("- aiortc.rtcicetransport: ICE传输")
-mylogger.info("- aiortc.rtcdtlstransport: DTLS传输")
-mylogger.info("- aiortc.rtcsctptransport: SCTP传输")
-mylogger.info("- aiortc.rtcpeerconnection: 对等连接")
-mylogger.info("- aiortc.mediastreams: 媒体流")
-mylogger.info("- aiortc.codecs: 编解码器")
-mylogger.info("=== 日志分析开始 ===")
+# mylogger.info("=== aiortc日志已启用 ===")
+# mylogger.info("日志级别: DEBUG")
+# mylogger.info("将输出以下模块的详细信息:")
+# mylogger.info("- aiortc: 核心WebRTC功能")
+# mylogger.info("- aiortc.rtcrtpsender: RTP发送器")
+# mylogger.info("- aiortc.rtcrtpreceiver: RTP接收器") 
+# mylogger.info("- aiortc.rtcicetransport: ICE传输")
+# mylogger.info("- aiortc.rtcdtlstransport: DTLS传输")
+# mylogger.info("- aiortc.rtcsctptransport: SCTP传输")
+# mylogger.info("- aiortc.rtcpeerconnection: 对等连接")
+# mylogger.info("- aiortc.mediastreams: 媒体流")
+# mylogger.info("- aiortc.codecs: 编解码器")
+# mylogger.info("=== 日志分析开始 ===")
 
 
 class BitrateMonitor:
@@ -141,23 +141,24 @@ class BitrateMonitor:
         avg_fps = sum(self.fps_history) / len(self.fps_history)
         target_fps = self.config.get('target_fps', 25)
         
-        mylogger.info(f"=== 码率自适应调整 ===")
-        mylogger.info(f"历史帧率: {[f'{fps:.1f}' for fps in self.fps_history[-3:]]}")
-        mylogger.info(f"平均帧率: {avg_fps:.1f} fps")
-        mylogger.info(f"目标帧率: {target_fps} fps")
-        mylogger.info(f"当前码率: {self.current_bitrate/1000:.0f}kbps")
+        # mylogger.info(f"=== 码率自适应调整 ===")
+        # mylogger.info(f"历史帧率: {[f'{fps:.1f}' for fps in self.fps_history[-3:]]}")
+        # mylogger.info(f"平均帧率: {avg_fps:.1f} fps")
+        # mylogger.info(f"目标帧率: {target_fps} fps")
+        # mylogger.info(f"当前码率: {self.current_bitrate/1000:.0f}kbps")
         
         # 根据帧率调整码率
         if avg_fps < target_fps * 0.8:  # 帧率过低，降低码率
             new_bitrate = max(self.min_bitrate, self.current_bitrate * 0.8)
-            mylogger.info(f"帧率过低({avg_fps:.1f}fps < {target_fps*0.8:.1f}fps)，降低码率: {self.current_bitrate/1000:.0f}k -> {new_bitrate/1000:.0f}k")
+            # mylogger.info(f"帧率过低({avg_fps:.1f}fps < {target_fps*0.8:.1f}fps)，降低码率: {self.current_bitrate/1000:.0f}k -> {new_bitrate/1000:.0f}k")
             self.current_bitrate = new_bitrate
         elif avg_fps > target_fps * 1.2:  # 帧率过高，可以提高码率
             new_bitrate = min(self.max_bitrate, self.current_bitrate * 1.1)
-            mylogger.info(f"帧率良好({avg_fps:.1f}fps > {target_fps*1.2:.1f}fps)，提高码率: {self.current_bitrate/1000:.0f}k -> {new_bitrate/1000:.0f}k")
+            # mylogger.info(f"帧率良好({avg_fps:.1f}fps > {target_fps*1.2:.1f}fps)，提高码率: {self.current_bitrate/1000:.0f}k -> {new_bitrate/1000:.0f}k")
             self.current_bitrate = new_bitrate
         else:
-            mylogger.info(f"帧率正常({avg_fps:.1f}fps)，保持当前码率: {self.current_bitrate/1000:.0f}kbps")
+            # mylogger.info(f"帧率正常({avg_fps:.1f}fps)，保持当前码率: {self.current_bitrate/1000:.0f}kbps")
+            pass
     
     def get_current_bitrate(self):
         """获取当前码率"""
@@ -187,19 +188,21 @@ class PlayerStreamTrack(MediaStreamTrack):
         
         # 打印码率配置参数
         if self.kind == 'video':
-            mylogger.info(f"=== WebRTC视频流配置 ===")
-            mylogger.info(f"目标帧率: {self.config.get('target_fps', 25)} fps")
-            mylogger.info(f"最大码率: {self.config.get('max_bitrate', 2000000)/1000:.0f}kbps")
-            mylogger.info(f"最小码率: {self.config.get('min_bitrate', 500000)/1000:.0f}kbps")
-            mylogger.info(f"起始码率: {self.config.get('start_bitrate', 1000000)/1000:.0f}kbps")
-            mylogger.info(f"最大队列大小: {self.max_queue_size}")
-            mylogger.info(f"帧丢弃阈值: {self.frame_drop_threshold}")
+            # mylogger.info(f"=== WebRTC视频流配置 ===")
+            # mylogger.info(f"目标帧率: {self.config.get('target_fps', 25)} fps")
+            # mylogger.info(f"最大码率: {self.config.get('max_bitrate', 2000000)/1000:.0f}kbps")
+            # mylogger.info(f"最小码率: {self.config.get('min_bitrate', 500000)/1000:.0f}kbps")
+            # mylogger.info(f"起始码率: {self.config.get('start_bitrate', 1000000)/1000:.0f}kbps")
+            # mylogger.info(f"最大队列大小: {self.max_queue_size}")
+            # mylogger.info(f"帧丢弃阈值: {self.frame_drop_threshold}")
+            pass
         elif self.kind == 'audio':
-            mylogger.info(f"=== WebRTC音频流配置 ===")
-            mylogger.info(f"音频最大码率: {self.config.get('audio_max_bitrate', 128000)/1000:.0f}kbps")
-            mylogger.info(f"音频最小码率: {self.config.get('audio_min_bitrate', 64000)/1000:.0f}kbps")
-            mylogger.info(f"音频采样率: {SAMPLE_RATE}Hz")
-            mylogger.info(f"音频包时长: {AUDIO_PTIME*1000:.0f}ms")
+            # mylogger.info(f"=== WebRTC音频流配置 ===")
+            # mylogger.info(f"音频最大码率: {self.config.get('audio_max_bitrate', 128000)/1000:.0f}kbps")
+            # mylogger.info(f"音频最小码率: {self.config.get('audio_min_bitrate', 64000)/1000:.0f}kbps")
+            # mylogger.info(f"音频采样率: {SAMPLE_RATE}Hz")
+            # mylogger.info(f"音频包时长: {AUDIO_PTIME*1000:.0f}ms")
+            pass
         
         if self.kind == 'video':
             self.framecount = 0
@@ -228,18 +231,18 @@ class PlayerStreamTrack(MediaStreamTrack):
                     # 使用更精确的睡眠控制
                     await asyncio.sleep(wait_time)
                 elif wait_time < -0.1:  # 如果延迟超过100ms，重置时间基准
-                    logger.warning(f"视频帧延迟过大({-wait_time:.3f}s)，重置时间基准")
+                    # logger.warning(f"视频帧延迟过大({-wait_time:.3f}s)，重置时间基准")
                     self._start = current_time - self.current_frame_count * VIDEO_PTIME
                     
                 # 添加时间戳日志
-                logger.debug(f"[WebRTC] 视频时间戳 - PTS: {self._timestamp}, 等待时间: {wait_time:.3f}s")
+                # logger.debug(f"[WebRTC] 视频时间戳 - PTS: {self._timestamp}, 等待时间: {wait_time:.3f}s")
                     
             else:
                 self._start = time.time()
                 self._timestamp = 0
                 self.timelist.append(self._start)
-                mylogger.info('video start:%f',self._start)
-                logger.info(f"[WebRTC] 视频流开始 - 起始时间: {self._start}")
+                # mylogger.info('video start:%f',self._start)
+                # logger.info(f"[WebRTC] 视频流开始 - 起始时间: {self._start}")
             return self._timestamp, VIDEO_TIME_BASE
         else: #audio
             if hasattr(self, "_timestamp"):
@@ -255,18 +258,18 @@ class PlayerStreamTrack(MediaStreamTrack):
                 if wait_time > 0:
                     await asyncio.sleep(wait_time)
                 elif wait_time < -0.05:  # 如果延迟超过50ms，重置时间基准
-                    logger.warning(f"音频帧延迟过大({-wait_time:.3f}s)，重置时间基准")
+                    # logger.warning(f"音频帧延迟过大({-wait_time:.3f}s)，重置时间基准")
                     self._start = current_time - self.current_frame_count * AUDIO_PTIME
                     
                 # 添加音频时间戳日志
-                logger.debug(f"[WebRTC] 音频时间戳 - PTS: {self._timestamp}, 等待时间: {wait_time:.3f}s")
+                # logger.debug(f"[WebRTC] 音频时间戳 - PTS: {self._timestamp}, 等待时间: {wait_time:.3f}s")
                     
             else:
                 self._start = time.time()
                 self._timestamp = 0
                 self.timelist.append(self._start)
-                mylogger.info('audio start:%f',self._start)
-                logger.info(f"[WebRTC] 音频流开始 - 起始时间: {self._start}")
+                # mylogger.info('audio start:%f',self._start)
+                # logger.info(f"[WebRTC] 音频流开始 - 起始时间: {self._start}")
             return self._timestamp, AUDIO_TIME_BASE
 
     async def recv(self) -> Union[Frame, Packet]:
@@ -274,10 +277,10 @@ class PlayerStreamTrack(MediaStreamTrack):
         self._player._start(self)
         
         # 添加详细的WebRTC日志
-        if self.kind == 'video':
-            logger.debug(f"[WebRTC] 视频帧接收 - 队列大小: {self._queue.qsize()}")
-        else:
-            logger.debug(f"[WebRTC] 音频帧接收 - 队列大小: {self._queue.qsize()}")
+        # if self.kind == 'video':
+        #     logger.debug(f"[WebRTC] 视频帧接收 - 队列大小: {self._queue.qsize()}")
+        # else:
+        #     logger.debug(f"[WebRTC] 音频帧接收 - 队列大小: {self._queue.qsize()}")
         
         # 添加队列管理
         if self.kind == 'video':
@@ -287,11 +290,13 @@ class PlayerStreamTrack(MediaStreamTrack):
                     # 丢弃一些旧帧以保持实时性
                     for _ in range(self.frame_drop_threshold):
                         self._queue.get_nowait()
-                    logger.warning("视频队列过大，丢弃旧帧")
+                    # logger.warning("视频队列过大，丢弃旧帧")
+                    pass
                 except asyncio.QueueEmpty:
                     pass
             elif self._queue.qsize() < 2:  # 如果队列过小，可能需要等待
-                logger.debug("视频队列较小，等待更多帧")
+                # logger.debug("视频队列较小，等待更多帧")
+                pass
         
         frame,eventpoint = await self._queue.get()
         pts, time_base = await self.next_timestamp()
@@ -308,52 +313,52 @@ class PlayerStreamTrack(MediaStreamTrack):
             self.lasttime = time.perf_counter()
             if self.framecount==100:
                 avg_fps = self.framecount/self.totaltime
-                mylogger.info(f"------actual avg final fps:{avg_fps:.4f}")
+                # mylogger.info(f"------actual avg final fps:{avg_fps:.4f}")
                 
                 # 添加帧率质量监控
-                if avg_fps < 20:  # 如果帧率过低
-                    mylogger.warning(f"视频帧率过低: {avg_fps:.2f} fps")
-                elif avg_fps > 30:  # 如果帧率过高
-                    mylogger.warning(f"视频帧率过高: {avg_fps:.2f} fps")
+                # if avg_fps < 20:  # 如果帧率过低
+                #     mylogger.warning(f"视频帧率过低: {avg_fps:.2f} fps")
+                # elif avg_fps > 30:  # 如果帧率过高
+                #     mylogger.warning(f"视频帧率过高: {avg_fps:.2f} fps")
                 
                 # 码率质量建议
-                target_fps = self.config.get('target_fps', 25)
-                if abs(avg_fps - target_fps) > 5:
-                    mylogger.info(f"建议调整码率设置，当前帧率 {avg_fps:.2f} fps，目标帧率 {target_fps} fps")
+                # target_fps = self.config.get('target_fps', 25)
+                # if abs(avg_fps - target_fps) > 5:
+                #     mylogger.info(f"建议调整码率设置，当前帧率 {avg_fps:.2f} fps，目标帧率 {target_fps} fps")
                 
                 # 更新码率监控并打印详细信息
                 self.bitrate_monitor.update_metrics(avg_fps, self._queue.qsize())
                 current_bitrate = self.bitrate_monitor.get_current_bitrate()
                 
                 # 打印详细的码率信息
-                mylogger.info(f"=== 实时码率监控 ===")
-                mylogger.info(f"当前帧率: {avg_fps:.2f} fps")
-                mylogger.info(f"当前码率: {current_bitrate/1000:.0f}kbps")
-                mylogger.info(f"队列大小: {self._queue.qsize()}")
-                mylogger.info(f"配置码率范围: {self.config.get('min_bitrate', 500000)/1000:.0f}k - {self.config.get('max_bitrate', 2000000)/1000:.0f}k")
+                # mylogger.info(f"=== 实时码率监控 ===")
+                # mylogger.info(f"当前帧率: {avg_fps:.2f} fps")
+                # mylogger.info(f"当前码率: {current_bitrate/1000:.0f}kbps")
+                # mylogger.info(f"队列大小: {self._queue.qsize()}")
+                # mylogger.info(f"配置码率范围: {self.config.get('min_bitrate', 500000)/1000:.0f}k - {self.config.get('max_bitrate', 2000000)/1000:.0f}k")
                 
                 # 计算码率使用率
-                max_bitrate = self.config.get('max_bitrate', 2000000)
-                bitrate_usage = (current_bitrate / max_bitrate) * 100
-                mylogger.info(f"码率使用率: {bitrate_usage:.1f}%")
+                # max_bitrate = self.config.get('max_bitrate', 2000000)
+                # bitrate_usage = (current_bitrate / max_bitrate) * 100
+                # mylogger.info(f"码率使用率: {bitrate_usage:.1f}%")
                 
                 # 性能评估
-                if bitrate_usage > 80:
-                    mylogger.warning(f"码率使用率较高({bitrate_usage:.1f}%)，建议检查网络状况")
-                elif bitrate_usage < 30:
-                    mylogger.info(f"码率使用率较低({bitrate_usage:.1f}%)，可以考虑提高码率以获得更好质量")
+                # if bitrate_usage > 80:
+                #     mylogger.warning(f"码率使用率较高({bitrate_usage:.1f}%)，建议检查网络状况")
+                # elif bitrate_usage < 30:
+                #     mylogger.info(f"码率使用率较低({bitrate_usage:.1f}%)，可以考虑提高码率以获得更好质量")
                     
                 self.framecount = 0
                 self.totaltime=0
         return frame
     
     def stop(self):
-        logger.info(f"[WebRTC] 停止媒体流轨道 - 类型: {self.kind}")
+        # logger.info(f"[WebRTC] 停止媒体流轨道 - 类型: {self.kind}")
         super().stop()
         if self._player is not None:
             self._player._stop(self)
             self._player = None
-            logger.info(f"[WebRTC] 媒体流轨道已停止 - 类型: {self.kind}")
+            # logger.info(f"[WebRTC] 媒体流轨道已停止 - 类型: {self.kind}")
 
 def player_worker_thread(
     quit_event,
@@ -404,11 +409,11 @@ class HumanPlayer:
 
     def _start(self, track: PlayerStreamTrack) -> None:
         self.__started.add(track)
-        logger.info(f"[WebRTC] 启动媒体轨道 - 类型: {track.kind}")
+        # logger.info(f"[WebRTC] 启动媒体轨道 - 类型: {track.kind}")
         
         if self.__thread is None:
             self.__log_debug("Starting worker thread")
-            logger.info("[WebRTC] 创建媒体播放器工作线程")
+            # logger.info("[WebRTC] 创建媒体播放器工作线程")
             self.__thread_quit = threading.Event()
             self.__thread = threading.Thread(
                 name="media-player",
@@ -422,26 +427,27 @@ class HumanPlayer:
                 ),
             )
             self.__thread.start()
-            logger.info("[WebRTC] 媒体播放器工作线程已启动")
+            # logger.info("[WebRTC] 媒体播放器工作线程已启动")
 
     def _stop(self, track: PlayerStreamTrack) -> None:
         self.__started.discard(track)
-        logger.info(f"[WebRTC] 停止媒体轨道 - 类型: {track.kind}")
+        # logger.info(f"[WebRTC] 停止媒体轨道 - 类型: {track.kind}")
 
         if not self.__started and self.__thread is not None:
             self.__log_debug("Stopping worker thread")
-            logger.info("[WebRTC] 停止媒体播放器工作线程")
+            # logger.info("[WebRTC] 停止媒体播放器工作线程")
             self.__thread_quit.set()
             self.__thread.join()
             self.__thread = None
             self.__log_debug("Worker thread stopped successfully")
-            logger.info("[WebRTC] 媒体播放器工作线程已停止")
+            # logger.info("[WebRTC] 媒体播放器工作线程已停止")
 
         if not self.__started and self.__container is not None:
             #self.__container.close()
             self.__container = None
             self.__log_debug("Container reference cleared")
-            logger.info("[WebRTC] 容器引用已清除")
+            # logger.info("[WebRTC] 容器引用已清除")
 
     def __log_debug(self, msg: str, *args) -> None:
-        mylogger.debug(f"HumanPlayer {msg}", *args)
+        # mylogger.debug(f"HumanPlayer {msg}", *args)
+        pass
