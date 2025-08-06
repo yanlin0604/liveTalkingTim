@@ -28,6 +28,14 @@
   "REF_FILE": "BV705_streaming",
   "REF_TEXT": null,
   "TTS_SERVER": "http://127.0.0.1:9880",
+  "// 豆包TTS配置": "Doubao TTS Configuration",
+  "DOUBAO_APPID": "8737889718",
+  "DOUBAO_TOKEN": "KitELbI5WB5yYEy4BxrD6lJnWWSaoXYb",
+  "doubao_audio": {
+    "speed_ratio": 0.8,
+    "volume_ratio": 1.0,
+    "pitch_ratio": 1.0
+  },
   "// LLM大语言模型配置": "Large Language Model Configuration",
   "llm_provider": "ollama",
   "llm_model": "qwen2:0.5b",
@@ -69,10 +77,17 @@
     "customvideo_config": "自定义动作JSON配置文件路径",
     "use_custom_silent": "静音时是否自动使用自定义动作（true=开启，false=关闭）",
     "custom_silent_audiotype": "静音时使用的具体动作类型（对应custom_config.json中的audiotype，留空则使用第一个可用动作）",
-    "tts": "TTS服务类型（edgetts/xtts/gpt-sovits/cosyvoice）",
+    "tts": "TTS服务类型（edgetts/xtts/gpt-sovits/cosyvoice/doubao）",
     "REF_FILE": "TTS参考文件或声音名称",
     "REF_TEXT": "TTS参考文本",
     "TTS_SERVER": "TTS服务器地址",
+    "DOUBAO_APPID": "豆包TTS应用ID",
+    "DOUBAO_TOKEN": "豆包TTS访问令牌",
+    "doubao_audio": {
+      "speed_ratio": "语速比例 [0.2,3]，默认为1，通常保留一位小数即可",
+      "volume_ratio": "音量比例 [0.1, 3]，默认为1，通常保留一位小数即可",
+      "pitch_ratio": "音高比例 [0.1, 3]，默认为1，通常保留一位小数即可"
+    },
     "llm_provider": "LLM提供商（dashscope阿里云/ollama本地）",
     "llm_model": "LLM模型名称",
     "llm_system_prompt": "LLM系统提示词",

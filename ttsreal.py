@@ -542,10 +542,16 @@ class TencentTTS(BaseTTS):
 class DoubaoTTS(BaseTTS):
     def __init__(self, opt, parent):
         super().__init__(opt, parent)
-        # 从配置中读取火山引擎参数
-        # TODO: 将这些参数替换为您的实际豆包 API 凭据
-        self.appid = os.getenv("DOUBAO_APPID") or "8737889718"
-        self.token = os.getenv("DOUBAO_TOKEN") or "KitELbI5WB5yYEy4BxrD6lJnWWSaoXYb"
+        # 从配置中读取豆包TTS参数
+        self.appid = getattr(opt, 'DOUBAO_APPID', "")
+        self.token = getattr(opt, 'DOUBAO_TOKEN', "")
+        
+        # 从配置中读取音频参数
+        doubao_audio_config = getattr(opt, 'doubao_audio', {})
+        self.speed_ratio = doubao_audio_config.get('speed_ratio', 0.8)
+        self.volume_ratio = doubao_audio_config.get('volume_ratio', 1.0)
+        self.pitch_ratio = doubao_audio_config.get('pitch_ratio', 1.0)
+        
         _cluster = 'volcano_tts'
         _host = "openspeech.bytedance.com"
         self.api_url = f"wss://{_host}/api/v1/tts/ws_binary"
@@ -563,9 +569,9 @@ class DoubaoTTS(BaseTTS):
                 "voice_type": "xxx",
                 "encoding": "pcm",
                 "rate": 16000,
-                "speed_ratio": 0.8,
-                "volume_ratio": 1.0,
-                "pitch_ratio": 1.0,
+                "speed_ratio": self.speed_ratio,
+                "volume_ratio": self.volume_ratio,
+                "pitch_ratio": self.pitch_ratio,
             },
             "request": {
                 "reqid": "xxx",
