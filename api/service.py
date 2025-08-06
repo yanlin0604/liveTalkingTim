@@ -11,7 +11,7 @@ from logger import logger
 
 
 class ServiceAPI:
-    """服务管理API类"""
+    """主数字人服务管理API类"""
     
     def __init__(self):
         self.service_status = "stopped"  # running, stopped, starting, stopping
@@ -21,11 +21,14 @@ class ServiceAPI:
         self.start_time = None
         self.stop_time = None
         
-        # 服务配置
-        self.service_script = "start.py"  # 启动脚本
-        self.target_processes = ["app.py", "start.py", "run_dynamic.py"]  # 要管理的进程
+        # 服务配置 - 专门管理主数字人服务
+        self.service_script = "start_main_service.sh"  # 使用专门的主服务启动脚本
+        self.stop_script = "stop_main_service.sh"      # 使用专门的主服务停止脚本
+        self.target_processes = ["app.py"]  # 只管理主数字人服务进程（app.py）
         self.log_dir = "/mnt/disk1/ftp/data/60397193/logs"  # 日志目录
         self.conda_env = "nerfstream"  # conda环境
+        self.script_dir = "/mnt/disk1/ftp/file/60397193/LiveTalking"  # 脚本目录
+        self.main_port = 8010  # 主服务端口
         
         # 初始化时检查服务状态
         self._check_service_status()
@@ -33,130 +36,142 @@ class ServiceAPI:
     def _check_service_status(self):
         """检查当前服务状态"""
         try:
-            # 检查是否有目标进程在运行
-            running_processes = []
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                try:
-                    cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
-                    for target in self.target_processes:
-                        if target in cmdline:
-                            running_processes.append({
-                                'pid': proc.info['pid'],
-                                'name': proc.info['name'],
-                                'cmdline': cmdline
-                            })
-                            break
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
+            logger.info("检查主服务状态...")
             
+            # 简化检查：只通过PID文件检查
+            pid_file = f"{self.log_dir}/main.pid"
+            if os.path.exists(pid_file):
+                try:
+                    with open(pid_file, 'r') as f:
+                        main_pid = int(f.read().strip())
+                    
+                    if psutil.pid_exists(main_pid):
+                        proc = psutil.Process(main_pid)
+                        cmdline = ' '.join(proc.cmdline()) if proc.cmdline() else ''
+                        
+                        # 确认是主服务进程
+                        if proc.cmdline() and 'app.py' in cmdline and 'management_server.py' not in cmdline:
+                            with self.service_lock:
+                                self.service_status = "running"
+                                self.service_pid = main_pid
+                                try:
+                                    self.start_time = proc.create_time()
+                                except Exception:
+                                    self.start_time = time.time()
+                            logger.info(f"主服务运行中，PID: {main_pid}")
+                            return
+                except Exception as e:
+                    logger.warning(f"读取PID文件失败: {e}")
+            
+            # 如果PID文件不存在或进程不存在，则认为服务已停止
             with self.service_lock:
-                if running_processes:
-                    self.service_status = "running"
-                    self.service_pid = running_processes[0]['pid']
-                    # 尝试获取启动时间
-                    try:
-                        proc = psutil.Process(self.service_pid)
-                        self.start_time = proc.create_time()
-                    except:
-                        self.start_time = time.time()
-                    logger.info(f"检测到服务正在运行，PID: {self.service_pid}")
-                else:
+                self.service_status = "stopped"
+                self.service_pid = None
+                self.stop_time = time.time()
+            logger.info("主服务已停止")
+            
+        except Exception as e:
+            logger.error(f"检查服务状态失败: {e}")
+            with self.service_lock:
                     self.service_status = "stopped"
                     self.service_pid = None
                     self.start_time = None
-                    logger.info("检测到服务已停止")
+                    logger.info("检测到主服务已停止，状态: stopped")
                     
         except Exception as e:
             logger.error(f"检查服务状态失败: {e}")
             self.service_status = "stopped"
     
     def _kill_service_processes(self):
-        """杀掉服务相关进程"""
+        """停止主数字人服务进程"""
         try:
-            killed_pids = []
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                try:
-                    cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
-                    for target in self.target_processes:
-                        if target in cmdline:
-                            pid = proc.info['pid']
-                            proc.terminate()
-                            killed_pids.append(pid)
-                            logger.info(f"终止进程: {pid} ({target})")
-                            break
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
+            logger.info("开始执行停止主服务进程操作...")
             
-            # 等待进程退出
-            if killed_pids:
-                time.sleep(2)
-                
-                # 强制杀掉仍在运行的进程
-                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                    try:
-                        cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
-                        for target in self.target_processes:
-                            if target in cmdline:
-                                pid = proc.info['pid']
-                                proc.kill()
-                                logger.info(f"强制终止进程: {pid} ({target})")
-                                break
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue
+            # 使用专门的停止脚本
+            cmd = ["bash", self.stop_script]
+            logger.info(f"停止命令: {' '.join(cmd)}")
             
+            # 异步执行停止脚本，避免阻塞当前管理服务
+            logger.info("开始异步执行停止脚本...")
+            process = subprocess.Popen(
+                cmd,
+                cwd=self.script_dir,  # 设置工作目录
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            logger.info(f"停止脚本已开始执行，进程ID: {process.pid}")
+            logger.info("停止脚本正在后台运行，管理服务继续运行")
+            
+            # 返回成功，让调用方知道脚本已开始执行
             return True
+                
         except Exception as e:
-            logger.error(f"杀掉服务进程失败: {e}")
+            logger.error(f"停止主数字人服务进程失败: {e}")
             return False
     
     def _start_service_process(self):
-        """启动服务进程"""
+        """启动主数字人服务进程"""
         try:
+            logger.info("开始启动主数字人服务进程...")
+            logger.info(f"当前工作目录: {os.getcwd()}")
+            logger.info(f"脚本目录: {self.script_dir}")
+            logger.info(f"日志目录: {self.log_dir}")
+            
             # 确保日志目录存在
             os.makedirs(self.log_dir, exist_ok=True)
+            logger.info("日志目录已确保存在")
             
-            # 构建启动命令
-            conda_init = "/mnt/disk1/ftp/data/60397193/miniconda3/etc/profile.d/conda.sh"
-            log_file = os.path.join(self.log_dir, "start.log")
+            # 使用专门的启动脚本
+            cmd = ["bash", self.service_script]
+            logger.info(f"启动命令: {' '.join(cmd)}")
             
-            # 使用bash启动，包含conda环境激活
-            cmd = [
-                "bash", "-c",
-                f"source {conda_init} && conda activate {self.conda_env} && python {self.service_script} > {log_file} 2>&1"
-            ]
-            
-            # 启动进程
+            # 异步启动进程，避免阻塞当前管理服务
+            logger.info("开始异步执行启动脚本...")
             process = subprocess.Popen(
                 cmd,
+                cwd=self.script_dir,  # 设置工作目录
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                preexec_fn=os.setsid  # 创建新的进程组
+                text=True
             )
             
-            self.service_process = process
-            self.service_pid = process.pid
+            logger.info(f"启动脚本已开始执行，进程ID: {process.pid}")
+            logger.info("启动脚本正在后台运行，管理服务继续运行")
+            
+            # 记录启动时间
             self.start_time = time.time()
             
-            logger.info(f"启动服务进程，PID: {self.service_pid}")
+            # 返回成功，让调用方知道脚本已开始执行
             return True
             
         except Exception as e:
-            logger.error(f"启动服务进程失败: {e}")
+            logger.error(f"启动主数字人服务进程失败: {e}")
             return False
     
     async def get_status(self, request: web.Request) -> web.Response:
-        """查询服务状态接口"""
+        """查询主数字人服务状态接口"""
         try:
             # 实时检查服务状态
             self._check_service_status()
             
             with self.service_lock:
                 status_info = {
+                    "service_type": "main_digital_human",  # 明确标识这是主数字人服务
                     "status": self.service_status,
                     "pid": self.service_pid,
                     "start_time": self.start_time,
                     "stop_time": self.stop_time,
-                    "uptime": None
+                    "uptime": None,
+                    "port": self.main_port,  # 主服务端口
+                    "endpoints": {
+                        "webrtc": f"http://localhost:{self.main_port}/offer",
+                        "chat": f"http://localhost:{self.main_port}/human",
+                        "audio": f"http://localhost:{self.main_port}/humanaudio",
+                        "dashboard": f"http://localhost:{self.main_port}/dashboard.html",
+                        "config_manager": f"http://localhost:{self.main_port}/config_manager.html"
+                    }
                 }
                 
                 # 计算运行时间
@@ -174,36 +189,50 @@ class ServiceAPI:
                         status_info["pid"] = None
                         status_info["status"] = "stopped"
                 
-                logger.info(f"查询服务状态: {self.service_status}, PID: {self.service_pid}")
+                # 检查端口监听状态
+                try:
+                    import socket
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    result = sock.connect_ex(('localhost', self.main_port))
+                    sock.close()
+                    status_info["port_listening"] = (result == 0)
+                except:
+                    status_info["port_listening"] = False
+                
+                logger.info(f"查询主数字人服务状态: {self.service_status}, PID: {self.service_pid}")
                 return web.json_response({
                     "success": True,
-                    "message": "查询服务状态成功",
+                    "message": "查询主数字人服务状态成功",
                     "data": status_info
                 })
                 
         except Exception as e:
-            logger.error(f"查询服务状态失败: {e}")
+            logger.error(f"查询主数字人服务状态失败: {e}")
             return web.json_response({
                 "success": False,
-                "message": f"查询服务状态失败: {str(e)}",
+                "message": f"查询主数字人服务状态失败: {str(e)}",
                 "data": None
             }, status=500)
     
     async def start_service(self, request: web.Request) -> web.Response:
-        """启动服务接口"""
+        """启动主数字人服务接口"""
         try:
+            logger.info("收到启动主数字人服务请求")
             with self.service_lock:
+                logger.info(f"当前服务状态: {self.service_status}")
                 if self.service_status == "running":
+                    logger.info("主数字人服务已在运行中，拒绝启动请求")
                     return web.json_response({
                         "success": False,
-                        "message": "服务已在运行中",
+                        "message": "主数字人服务已在运行中",
                         "data": None
                     }, status=400)
                 
                 if self.service_status == "starting":
+                    logger.info("主数字人服务正在启动中，拒绝重复启动请求")
                     return web.json_response({
                         "success": False,
-                        "message": "服务正在启动中，请稍候",
+                        "message": "主数字人服务正在启动中，请稍候",
                         "data": None
                     }, status=400)
                 
@@ -211,70 +240,67 @@ class ServiceAPI:
                 self.service_status = "starting"
                 self.stop_time = None
                 
-                logger.info("开始启动服务...")
+                logger.info("设置服务状态为启动中，开始启动主数字人服务...")
                 
-                # 先杀掉可能存在的旧进程
+                # 先停止可能存在的旧进程
+                logger.info("开始停止可能存在的旧进程...")
                 self._kill_service_processes()
                 
                 # 启动新进程
+                logger.info("开始启动新进程...")
                 if self._start_service_process():
-                    # 等待一下确保进程启动
-                    await asyncio.sleep(2)
-                    
-                    # 再次检查状态
-                    self._check_service_status()
-                    
-                    if self.service_status == "running":
-                        logger.info("服务启动成功")
-                        return web.json_response({
-                            "success": True,
-                            "message": "服务启动成功",
-                            "data": {
-                                "status": self.service_status,
-                                "pid": self.service_pid,
-                                "start_time": self.start_time
-                            }
-                        })
-                    else:
-                        self.service_status = "stopped"
-                        return web.json_response({
-                            "success": False,
-                            "message": "服务启动失败，请检查日志",
-                            "data": None
-                        }, status=500)
+                    # 脚本已开始执行，直接设置为运行状态
+                    self.service_status = "running"
+                    logger.info("启动脚本已执行，主数字人服务启动中")
+                    return web.json_response({
+                        "success": True,
+                        "message": "主数字人服务启动成功",
+                        "data": {
+                            "service_type": "main_digital_human",
+                            "status": self.service_status,
+                            "start_time": self.start_time,
+                            "port": self.main_port,
+                            "note": "启动脚本已执行，管理服务器继续运行"
+                        }
+                    })
                 else:
+                    logger.error("启动脚本执行失败")
                     self.service_status = "stopped"
                     return web.json_response({
                         "success": False,
-                        "message": "服务启动失败",
+                        "message": "主数字人服务启动失败",
                         "data": None
                     }, status=500)
                 
         except Exception as e:
             with self.service_lock:
                 self.service_status = "stopped"
-            logger.error(f"启动服务失败: {e}")
+            logger.error(f"启动主数字人服务失败: {e}")
             return web.json_response({
                 "success": False,
-                "message": f"启动服务失败: {str(e)}",
+                "message": f"启动主数字人服务失败: {str(e)}",
                 "data": None
             }, status=500)
     
     async def stop_service(self, request: web.Request) -> web.Response:
-        """停止服务接口"""
+        """停止主数字人服务接口"""
         try:
+            logger.info("收到停止主数字人服务请求")
             with self.service_lock:
+                logger.info(f"当前服务状态: {self.service_status}")
                 if self.service_status == "stopped":
+                    logger.info("主数字人服务已停止，拒绝停止请求")
                     return web.json_response({
                         "success": False,
-                        "message": "服务已停止",
+                        "message": "主数字人服务已停止",
                         "data": None
                     }, status=400)
                 
                 if self.service_status == "stopping":
+                    logger.info("主数字人服务正在停止中，拒绝重复停止请求")
                     return web.json_response({
                         "success": False,
-                        "message": "服务正在停止中，请稍候",
+                        "message": "主数字人服务正在停止中，请稍候",
                         "data": None
                     }, status=400)
                 
@@ -282,52 +308,39 @@ class ServiceAPI:
                 self.service_status = "stopping"
                 self.stop_time = time.time()
                 
-                logger.info("开始停止服务...")
+                logger.info("设置服务状态为停止中，开始停止主数字人服务...")
                 
-                # 杀掉服务进程
+                # 停止服务进程
+                logger.info("开始停止服务进程...")
                 if self._kill_service_processes():
-                    # 等待进程完全退出
-                    await asyncio.sleep(2)
-                    
-                    # 再次检查状态
-                    self._check_service_status()
-                    
-                    if self.service_status == "stopped":
-                        logger.info("服务停止成功")
-                        return web.json_response({
-                            "success": True,
-                            "message": "服务停止成功",
-                            "data": {
-                                "status": self.service_status,
-                                "stop_time": self.stop_time
-                            }
-                        })
-                    else:
-                        # 如果进程仍在运行，强制停止
-                        self._kill_service_processes()
-                        self.service_status = "stopped"
-                        return web.json_response({
-                            "success": True,
-                            "message": "服务已强制停止",
-                            "data": {
-                                "status": self.service_status,
-                                "stop_time": self.stop_time
-                            }
-                        })
+                    # 脚本已开始执行，直接设置为已停止状态
+                    self.service_status = "stopped"
+                    logger.info("停止脚本已执行，主数字人服务停止中")
+                    return web.json_response({
+                        "success": True,
+                        "message": "主数字人服务停止成功",
+                        "data": {
+                            "service_type": "main_digital_human",
+                            "status": self.service_status,
+                            "stop_time": self.stop_time,
+                            "note": "停止脚本已执行，管理服务器继续运行"
+                        }
+                    })
                 else:
+                    logger.error("停止脚本执行失败")
                     self.service_status = "running"  # 恢复为运行状态
                     return web.json_response({
                         "success": False,
-                        "message": "停止服务失败",
+                        "message": "停止主数字人服务失败",
                         "data": None
                     }, status=500)
                 
         except Exception as e:
             with self.service_lock:
                 self.service_status = "running"  # 恢复为运行状态
-            logger.error(f"停止服务失败: {e}")
+            logger.error(f"停止主数字人服务失败: {e}")
             return web.json_response({
                 "success": False,
-                "message": f"停止服务失败: {str(e)}",
+                "message": f"停止主数字人服务失败: {str(e)}",
                 "data": None
             }, status=500) 

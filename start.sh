@@ -7,7 +7,7 @@ source /mnt/disk1/ftp/data/60397193/miniconda3/etc/profile.d/conda.sh
 conda activate nerfstream
 
 # 配置参数
-SCRIPT_DIR="/mnt/disk1/ftp/file/60397193/Unimed"
+SCRIPT_DIR="/mnt/disk1/ftp/file/60397193/LiveTalking"
 LOG_DIR="/mnt/disk1/ftp/data/60397193/logs"
 CONFIG_FILE="config.json"
 

@@ -270,10 +270,10 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     # TTS试听接口
     app.router.add_post("/preview_tts", tts_api.preview_tts)  # TTS试听接口
     
-    # 服务管理接口
-    app.router.add_get("/get_status", service_api.get_status)  # 查询服务状态接口
-    app.router.add_post("/start_service", service_api.start_service)  # 启动服务接口
-    app.router.add_post("/stop_service", service_api.stop_service)  # 停止服务接口
+    # 主数字人服务管理接口
+    app.router.add_get("/get_status", service_api.get_status)  # 查询主数字人服务状态接口
+    app.router.add_post("/start_service", service_api.start_service)  # 启动主数字人服务接口
+    app.router.add_post("/stop_service", service_api.stop_service)  # 停止主数字人服务接口
     
     # 添加Swagger文档
     create_swagger_docs(app)

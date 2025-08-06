@@ -1,8 +1,8 @@
 conda activate nerfstream
-cd /mnt/disk1/ftp/file/60397193/Unimed
+cd /mnt/disk1/ftp/file/60397193/LiveTalking
 python app.py --config_file config.json
 
-cd /mnt/disk1/ftp/file/60397193/Unimed
+cd /mnt/disk1/ftp/file/60397193/LiveTalking
 bash start.sh
 
 
