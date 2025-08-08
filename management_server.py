@@ -54,6 +54,7 @@ from api.auth import AuthAPI
 from api.training import TrainingAPI, TrainingTask
 from api.tts import TTSAPI
 from api.service import ServiceAPI
+from api.audio import AudioAPI
 from dynamic_config import dynamic_config, start_config_monitoring, get_config, set_config
 from config_callbacks import setup_config_callbacks
 from logger import logger
@@ -245,6 +246,7 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     training_api = TrainingAPI(training_tasks, training_tasks_lock, auth_api)
     tts_api = TTSAPI()
     service_api = ServiceAPI()
+    audio_api = AudioAPI()
     
     # 头像管理接口
     app.router.add_get("/get_avatars", avatars_api.get_avatars)  # 获取可用头像列表
@@ -274,6 +276,12 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     app.router.add_get("/get_status", service_api.get_status)  # 查询主数字人服务状态接口
     app.router.add_post("/start_service", service_api.start_service)  # 启动主数字人服务接口
     app.router.add_post("/stop_service", service_api.stop_service)  # 停止主数字人服务接口
+    
+    # 音频管理接口
+    app.router.add_post("/audio/upload", audio_api.upload_file)         # 上传本地音频文件
+    app.router.add_post("/audio/upload_url", audio_api.upload_url)      # 通过远程URL保存音频
+    app.router.add_get("/audio/list", audio_api.list_audios)            # 列出音频记录
+    app.router.add_delete("/audio/{id}", audio_api.delete_audio)        # 根据ID删除音频及索引
     
     # 添加Swagger文档
     create_swagger_docs(app)

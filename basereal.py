@@ -129,10 +129,17 @@ class BaseReal:
         self.custom_audio_index = {}  # 自定义音频索引
         self.custom_index = {}  # 自定义索引
         self.custom_opt = {}  # 自定义选项
+        
         # 从配置文件读取自定义动作开关设置
         self.use_custom_silent = getattr(opt, 'use_custom_silent', True)
         # 从配置文件读取静默时使用的动作类型（可以为空）
         self.custom_silent_audiotype = getattr(opt, 'custom_silent_audiotype', "")
+        
+        # 记录静默自定义动作配置
+        logger.info("=== 静默自定义动作配置 ===")
+        logger.info(f"静默自定义动作开关: {'开启' if self.use_custom_silent else '关闭'}")
+        logger.info(f"指定静默动作类型: {self.custom_silent_audiotype or '未指定'}")
+        logger.info(f"可用自定义动作配置数量: {len(opt.customopt) if hasattr(opt, 'customopt') and opt.customopt else 0}")
         
         # 读取推流质量配置
         self.streaming_quality = getattr(opt, 'streaming_quality', {})
@@ -147,6 +154,7 @@ class BaseReal:
         
         logger.info(f"推流质量配置: 目标帧率={self.target_fps}fps, 最大队列={self.max_video_queue_size}, 最小队列={self.min_video_queue_size}")
         
+        # 加载自定义动作配置
         self.__loadcustom()
 
     def put_msg_txt(self,msg,eventpoint=None):
@@ -189,58 +197,119 @@ class BaseReal:
         return self.speaking
     
     def __loadcustom(self):
+        """加载自定义动作配置"""
+        logger.info("=== 开始加载自定义动作配置 ===")
+        logger.info(f"静默自定义动作开关: {'开启' if self.use_custom_silent else '关闭'}")
+        logger.info(f"指定静默动作类型: {self.custom_silent_audiotype or '未指定'}")
+        logger.info(f"可用自定义动作数量: {len(self.opt.customopt) if self.opt.customopt else 0}")
+        
         # 如果开启了静默自定义动作，只加载指定的动作
         if self.use_custom_silent:
+            logger.info("静默自定义动作已开启，开始加载指定动作")
+            
             # 如果指定了具体的动作类型，只加载该动作
             if self.custom_silent_audiotype:
                 target_audiotype = self.custom_silent_audiotype
+                logger.info(f"查找指定的静默动作类型: {target_audiotype}")
+                
                 for item in self.opt.customopt:
+                    logger.debug(f"检查动作配置: audiotype={item.get('audiotype')}, imgpath={item.get('imgpath')}, audiopath={item.get('audiopath')}")
                     if item['audiotype'] == target_audiotype:
-                        logger.info(f"加载指定静默动作: {item}")
+                        logger.info(f"找到匹配的指定静默动作: {item}")
+                        
+                        # 加载图像文件
                         input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
                         input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+                        logger.info(f"找到图像文件数量: {len(input_img_list)}")
+                        logger.debug(f"图像文件列表: {input_img_list[:3]}...")  # 只显示前3个
+                        
                         audiotype = item['audiotype']
                         self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
+                        logger.info(f"成功加载图像帧数: {len(self.custom_img_cycle[audiotype])}")
+                        
+                        # 加载音频文件
                         self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
+                        logger.info(f"成功加载音频文件: 采样率={sample_rate}Hz, 时长={len(self.custom_audio_cycle[audiotype])/sample_rate:.2f}秒")
+                        
+                        # 初始化索引
                         self.custom_audio_index[audiotype] = 0
                         self.custom_index[audiotype] = 0
                         self.custom_opt[audiotype] = item
-                        logger.info(f"成功加载指定静默动作 audiotype={audiotype}")
+                        
+                        logger.info(f"✅ 成功加载指定静默动作 audiotype={audiotype}")
+                        logger.info(f"当前已加载的自定义动作: {list(self.custom_index.keys())}")
                         return
-                logger.warning(f"未找到指定的静默动作 audiotype={target_audiotype}")
+                
+                logger.warning(f"❌ 未找到指定的静默动作 audiotype={target_audiotype}")
+                logger.warning(f"可用的动作类型: {[item.get('audiotype') for item in self.opt.customopt]}")
+            
             # 如果没有指定动作类型，加载第一个可用动作
             if self.opt.customopt:
                 item = self.opt.customopt[0]
-                logger.info(f"加载第一个可用静默动作: {item}")
+                logger.info(f"未指定动作类型，加载第一个可用静默动作: {item}")
+                
+                # 加载图像文件
                 input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
                 input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+                logger.info(f"找到图像文件数量: {len(input_img_list)}")
+                logger.debug(f"图像文件列表: {input_img_list[:3]}...")  # 只显示前3个
+                
                 audiotype = item['audiotype']
                 self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
+                logger.info(f"成功加载图像帧数: {len(self.custom_img_cycle[audiotype])}")
+                
+                # 加载音频文件
                 self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
+                logger.info(f"成功加载音频文件: 采样率={sample_rate}Hz, 时长={len(self.custom_audio_cycle[audiotype])/sample_rate:.2f}秒")
+                
+                # 初始化索引
                 self.custom_audio_index[audiotype] = 0
                 self.custom_index[audiotype] = 0
                 self.custom_opt[audiotype] = item
-                logger.info(f"成功加载第一个可用静默动作 audiotype={audiotype}")
+                
+                logger.info(f"✅ 成功加载第一个可用静默动作 audiotype={audiotype}")
+                logger.info(f"当前已加载的自定义动作: {list(self.custom_index.keys())}")
                 return
+            else:
+                logger.warning("❌ 没有可用的自定义动作配置")
         else:
-            # 如果未开启静默自定义动作，加载所有动作（保持原有行为）
-            for item in self.opt.customopt:
-                logger.info(item)
-                input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
-                input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-                audiotype = item['audiotype']
-                self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
-                self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
-                self.custom_audio_index[audiotype] = 0
-                self.custom_index[audiotype] = 0
-                self.custom_opt[audiotype] = item
+            logger.info("静默自定义动作未开启，跳过自定义动作加载")
+        
+        logger.info("=== 自定义动作配置加载完成 ===")
+        # else:
+        #     # 如果未开启静默自定义动作，加载所有动作（保持原有行为）
+        #     for item in self.opt.customopt:
+        #         logger.info(item)
+        #         input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
+        #         input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+        #         audiotype = item['audiotype']
+        #         self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
+        #         self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
+        #         self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
+        #         self.custom_audio_index[audiotype] = 0
+        #         self.custom_index[audiotype] = 0
+        #         self.custom_opt[audiotype] = item
 
     def init_customindex(self):
-        self.curr_state=0
+        """初始化自定义动作索引"""
+        logger.info("🔄 初始化自定义动作索引")
+        old_state = self.curr_state
+        self.curr_state = 0
+        logger.debug(f"状态重置: {old_state} → {self.curr_state}")
+        
+        # 重置音频索引
         for key in self.custom_audio_index:
-            self.custom_audio_index[key]=0
+            old_audio_index = self.custom_audio_index[key]
+            self.custom_audio_index[key] = 0
+            logger.debug(f"重置音频索引 audiotype={key}: {old_audio_index} → 0")
+        
+        # 重置视频索引
         for key in self.custom_index:
-            self.custom_index[key]=0
+            old_video_index = self.custom_index[key]
+            self.custom_index[key] = 0
+            logger.debug(f"重置视频索引 audiotype={key}: {old_video_index} → 0")
+        
+        logger.info("✅ 自定义动作索引初始化完成")
 
     def notify(self,eventpoint):
         logger.info("notify:%s",eventpoint)
@@ -376,32 +445,61 @@ class BaseReal:
             return size - res - 1 
     
     def get_audio_stream(self,audiotype):
+        """获取自定义动作的音频流"""
         idx = self.custom_audio_index[audiotype]
         stream = self.custom_audio_cycle[audiotype][idx:idx+self.chunk]
         self.custom_audio_index[audiotype] += self.chunk
-        if self.custom_audio_index[audiotype]>=self.custom_audio_cycle[audiotype].shape[0]:
-            self.curr_state = 1  #当前视频不循环播放，切换到静音状态
+        
+        logger.debug(f"获取音频流 audiotype={audiotype}: 索引{idx}→{self.custom_audio_index[audiotype]}, 音频长度={len(stream)}")
+        
+        if self.custom_audio_index[audiotype] >= self.custom_audio_cycle[audiotype].shape[0]:
+            old_state = self.curr_state
+            self.curr_state = 1  # 当前视频不循环播放，切换到静音状态
+            logger.info(f"🎵 自定义动作音频播放完成 audiotype={audiotype}, 状态切换: {old_state} → {self.curr_state}")
+        
         return stream
     
     def set_custom_state(self,audiotype, reinit=True):
+        """设置自定义动作状态"""
+        logger.info(f"🔄 设置自定义动作状态: audiotype={audiotype}, reinit={reinit}")
         print('set_custom_state:',audiotype)
+        
         if self.custom_audio_index.get(audiotype) is None:
+            logger.warning(f"❌ 指定的audiotype={audiotype}不存在，可用类型: {list(self.custom_audio_index.keys())}")
             return
+        
+        old_state = self.curr_state
         self.curr_state = audiotype
+        logger.info(f"状态切换: {old_state} → {audiotype}")
+        
         if reinit:
+            old_audio_index = self.custom_audio_index[audiotype]
+            old_video_index = self.custom_index[audiotype]
             self.custom_audio_index[audiotype] = 0
             self.custom_index[audiotype] = 0
+            logger.info(f"重置索引 audiotype={audiotype}: 音频{old_audio_index}→0, 视频{old_video_index}→0")
+        else:
+            logger.debug(f"保持当前索引 audiotype={audiotype}: 音频={self.custom_audio_index[audiotype]}, 视频={self.custom_index[audiotype]}")
+        
+        logger.info(f"✅ 自定义动作状态设置完成: audiotype={audiotype}")
 
     def get_default_silent_audiotype(self):
         """获取静音时的默认动作类型"""
+        logger.debug(f"获取默认静默动作类型 - 开关状态: {self.use_custom_silent}, 可用动作: {list(self.custom_index.keys()) if self.custom_index else '无'}")
+        
         # 如果开关开启，查找可用的自定义动作
         if self.use_custom_silent and self.custom_index:
             # 如果指定了具体的动作类型，优先使用指定的
             if self.custom_silent_audiotype and self.custom_silent_audiotype in self.custom_index:
+                logger.debug(f"使用指定的静默动作类型: {self.custom_silent_audiotype}")
                 return self.custom_silent_audiotype
             # 否则返回第一个可用的audiotype
-            return list(self.custom_index.keys())[0]
+            default_audiotype = list(self.custom_index.keys())[0]
+            logger.debug(f"使用第一个可用静默动作类型: {default_audiotype}")
+            return default_audiotype
+        
         # 否则返回1（静音状态）
+        logger.debug("使用默认静音状态 (audiotype=1)")
         return 1
 
     def is_speaking(self):
@@ -410,7 +508,9 @@ class BaseReal:
 
     def set_use_custom_silent(self, enabled):
         """设置静音时是否使用自定义动作"""
+        old_status = self.use_custom_silent
         self.use_custom_silent = enabled
+        logger.info(f"静默自定义动作状态变更: {'开启' if old_status else '关闭'} → {'开启' if enabled else '关闭'}")
         print(f"静音时使用自定义动作: {'开启' if enabled else '关闭'}")
 
     def process_frames(self,quit_event,loop=None,audio_track=None,video_track=None):
@@ -504,16 +604,21 @@ class BaseReal:
                 self.speaking = False
                 # 静音时使用默认的静音动作类型
                 audiotype = self.get_default_silent_audiotype()
+                
                 # 调试信息：显示当前使用的audiotype
                 if hasattr(self, '_last_silent_audiotype') and self._last_silent_audiotype != audiotype:
+                    logger.info(f"🔄 静音状态切换到audiotype: {audiotype}")
                     print(f"静音状态切换到audiotype: {audiotype}")
                 self._last_silent_audiotype = audiotype
                 
                 if self.custom_index.get(audiotype) is not None: #有自定义视频
+                    logger.debug(f"使用自定义静默动作 audiotype={audiotype}, 当前索引={self.custom_index[audiotype]}")
                     mirindex = self.mirror_index(len(self.custom_img_cycle[audiotype]),self.custom_index[audiotype])
                     target_frame = self.custom_img_cycle[audiotype][mirindex]
                     self.custom_index[audiotype] += 1
+                    logger.debug(f"自定义静默动作帧索引: {mirindex}/{len(self.custom_img_cycle[audiotype])}")
                 else:
+                    logger.debug(f"使用默认静默帧 audiotype={audiotype}, 帧索引={idx}")
                     target_frame = self.frame_list_cycle[idx]
                 
                 if enable_transition:
