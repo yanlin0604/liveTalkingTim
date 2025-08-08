@@ -131,25 +131,31 @@ def build_nerfreal(sessionid:int)->BaseReal:
     opt.sessionid=sessionid
     if opt.model == 'wav2lip':
         logger.info("使用wav2lip模型")
-        from lipreal import LipReal
-        nerfreal = LipReal(opt,model,avatar)
+        from lipreal import LipReal, load_avatar, warm_up
+        # 按当前配置热加载 avatar
+        current_avatar = load_avatar(opt.avatar_id)
+        nerfreal = LipReal(opt, model, current_avatar)
         # 为新会话预热模型，确保推理稳定性
         logger.info(f"正在为会话 {sessionid} 预热模型...")
-        from lipreal import warm_up
         model_res = 384 if '384' in str(model) else 256
         warm_up(opt.batch_size, model, model_res)
         logger.info(f"会话 {sessionid} 模型预热完成")
     elif opt.model == 'musetalk':
         logger.info("使用musetalk模型")
-        from musereal import MuseReal
-        nerfreal = MuseReal(opt,model,avatar)
+        from musereal import MuseReal, load_avatar
+        # 按当前配置热加载 avatar
+        current_avatar = load_avatar(opt.avatar_id)
+        nerfreal = MuseReal(opt, model, current_avatar)
     # elif opt.model == 'ernerf':
     #     from nerfreal import NeRFReal
     #     nerfreal = NeRFReal(opt,model,avatar)
     elif opt.model == 'ultralight':
         logger.info("使用ultralight模型")
-        from lightreal import LightReal
-        nerfreal = LightReal(opt,model,avatar)
+        from lightreal import LightReal, load_avatar, warm_up
+        # 按当前配置热加载 avatar，并在本会话预热
+        current_avatar = load_avatar(opt.avatar_id)
+        nerfreal = LightReal(opt, model, current_avatar)
+        warm_up(opt.batch_size, current_avatar, 160)
     else:
         logger.error(f"未知的模型类型: {opt.model}")
         return None
@@ -331,13 +337,12 @@ if __name__ == '__main__':
     #     model = load_model(opt)
     #     avatar = load_avatar(opt) 
     if opt.model == 'musetalk':
-        from musereal import MuseReal,load_model,load_avatar,warm_up
+        from musereal import MuseReal,load_model,warm_up
         logger.info(opt)
         model = load_model()
-        avatar = load_avatar(opt.avatar_id) 
         warm_up(opt.batch_size,model)      
     elif opt.model == 'wav2lip':
-        from lipreal import LipReal,load_model,load_avatar,warm_up
+        from lipreal import LipReal,load_model,warm_up
         logger.info(opt)
 
         # 智能确定模型路径
@@ -378,17 +383,14 @@ if __name__ == '__main__':
 
         logger.info(f"Loading wav2lip model from: {model_path}")
         model = load_model(model_path)
-        avatar = load_avatar(opt.avatar_id)
 
         # 根据模型大小调整warm_up参数
         model_res = 384 if '384' in model_path else 256
         warm_up(opt.batch_size, model, model_res)
     elif opt.model == 'ultralight':
-        from lightreal import LightReal,load_model,load_avatar,warm_up
+        from lightreal import LightReal,load_model
         logger.info(opt)
         model = load_model(opt)
-        avatar = load_avatar(opt.avatar_id)
-        warm_up(opt.batch_size,avatar,160)
 
     # if opt.transport=='rtmp':
     #     thread_quit = Event()

@@ -513,6 +513,31 @@ class BaseReal:
         logger.info(f"静默自定义动作状态变更: {'开启' if old_status else '关闭'} → {'开启' if enabled else '关闭'}")
         print(f"静音时使用自定义动作: {'开启' if enabled else '关闭'}")
 
+    def set_custom_silent_audiotype(self, audiotype: str):
+        """运行时设置静默自定义动作类型，并重新加载配置
+
+        参数:
+            audiotype: 目标动作类型（字符串，可为空字符串表示不指定）
+        """
+        old_type = getattr(self, 'custom_silent_audiotype', "")
+        self.custom_silent_audiotype = audiotype or ""
+        logger.info(f"静默动作类型变更: {old_type or '未指定'} → {self.custom_silent_audiotype or '未指定'}")
+        # 重新加载自定义动作配置以应用新的选择
+        try:
+            self.__loadcustom()
+            logger.info("静默自定义动作配置已重新加载")
+        except Exception as e:
+            logger.error(f"重新加载自定义动作失败: {e}")
+
+    def reload_custom_actions(self):
+        """对外暴露的重新加载自定义动作配置接口"""
+        logger.info("收到请求：重新加载自定义动作配置")
+        try:
+            self.__loadcustom()
+            logger.info("自定义动作配置重新加载完成")
+        except Exception as e:
+            logger.error(f"重新加载自定义动作失败: {e}")
+
     def process_frames(self,quit_event,loop=None,audio_track=None,video_track=None):
         enable_transition = False  # 设置为False禁用过渡效果，True启用
         

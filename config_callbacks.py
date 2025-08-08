@@ -75,6 +75,27 @@ def setup_config_callbacks(opt, nerfreals):
         except Exception as e:
             logger.error(f"更新颜色匹配配置失败: {e}")
     
+    def on_custom_silent_change(key, old_value, new_value):
+        """自定义静默动作相关配置变化回调"""
+        try:
+            if key == 'custom_silent_audiotype':
+                opt.custom_silent_audiotype = str(new_value or "")
+                logger.info(f"静默动作类型已更新: {old_value or '未指定'} -> {opt.custom_silent_audiotype or '未指定'}")
+                # 推送到所有实例：运行时立即重新加载自定义动作
+                for sessionid, nerfreal in nerfreals.items():
+                    if nerfreal and hasattr(nerfreal, 'set_custom_silent_audiotype'):
+                        nerfreal.set_custom_silent_audiotype(opt.custom_silent_audiotype)
+            elif key == 'use_custom_silent':
+                # 允许布尔/字符串输入
+                val = bool(new_value)
+                opt.use_custom_silent = val
+                logger.info(f"静默自定义动作开关更新: {old_value} -> {val}")
+                for sessionid, nerfreal in nerfreals.items():
+                    if nerfreal and hasattr(nerfreal, 'set_use_custom_silent'):
+                        nerfreal.set_use_custom_silent(val)
+        except Exception as e:
+            logger.error(f"更新自定义静默动作配置失败: {e}")
+
     def on_avatar_change(key, old_value, new_value):
         """数字人ID变化回调"""
         try:
@@ -114,6 +135,10 @@ def setup_config_callbacks(opt, nerfreals):
     register_config_callback('enable_color_matching', on_color_matching_change)
     register_config_callback('color_matching_strength', on_color_matching_change)
     
+    # 自定义静默动作回调
+    register_config_callback('custom_silent_audiotype', on_custom_silent_change)
+    register_config_callback('use_custom_silent', on_custom_silent_change)
+
     # 数字人相关回调
     register_config_callback('avatar_id', on_avatar_change)
     
