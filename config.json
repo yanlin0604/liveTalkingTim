@@ -28,6 +28,7 @@
   "REF_FILE": "BV705_streaming",
   "REF_TEXT": null,
   "TTS_SERVER": "http://127.0.0.1:9880",
+  "tts_speed": 1.0,
   "// 豆包TTS配置": "Doubao TTS Configuration",
   "DOUBAO_APPID": "8737889718",
   "DOUBAO_TOKEN": "KitELbI5WB5yYEy4BxrD6lJnWWSaoXYb",
