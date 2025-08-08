@@ -63,6 +63,8 @@ class BaseTTS:
 
         self.msgqueue = Queue()
         self.state = State.RUNNING
+        # 语速（1.0为原速），可在外部通过 opt.tts_speed 配置
+        self.speed = getattr(opt, 'tts_speed', 1.0)
 
     def flush_talk(self):
         self.msgqueue.queue.clear()
@@ -254,6 +256,15 @@ class FishTTS(BaseTTS):
 
 ###########################################################################################
 class SovitsTTS(BaseTTS):
+    def __init__(self, opt, parent):
+        super().__init__(opt, parent)
+        # 固定语速（1.0为原速）；你可以直接改这一行数字来全局调节 gpt-sovits 的语速
+        # 改为从动态配置获取，键名：tts_speed；若未配置则回退到 1.0
+        try:
+            self.speed = float(get_config('tts_speed', 1.0))
+        except Exception:
+            self.speed = 1.0
+        logger.info("[SovitsTTS] 初始化语速，来自配置 tts_speed=%.3f", self.speed)
     def txt_to_audio(self,msg): 
         text,textevent = msg
         self.stream_tts(
@@ -327,27 +338,90 @@ class SovitsTTS(BaseTTS):
 
         return stream
 
+    def __time_stretch(self, stream: np.ndarray) -> np.ndarray:
+        """
+        对单声道 float32 PCM 流做不变调变速。依赖 librosa；缺库或异常时回退原速。
+        """
+        # 优先从动态配置读取，支持热更新；否则退回实例上的 speed
+        try:
+            rate = float(get_config('tts_speed', getattr(self, 'speed', 1.0)))
+        except Exception:
+            rate = 1.0
+        if not np.isfinite(rate) or abs(rate - 1.0) < 1e-3:
+            return stream
+        # clamp 合理范围，避免极端速率导致失真
+        rate = max(0.5, min(2.0, rate))
+        try:
+            import librosa  # 延迟导入，避免环境缺库时影响其他路径
+            # librosa 接受 float64，更稳妥地转换后返回 float32
+            y = stream.astype(np.float32)
+            y_stretched = librosa.effects.time_stretch(y=y.astype(np.float32), rate=rate)
+            return y_stretched.astype(np.float32)
+        except Exception as e:
+            logger.warning("[WARN] 语速调整失败或缺少librosa，回退原速。rate=%.3f, err=%s", rate, e)
+            return stream
+
     def stream_tts(self,audio_stream,msg):
         text,textevent = msg
         first = True
+        last_stream: np.ndarray | None = None  # 跨块残留缓存，避免边界丢帧
+        # 从配置中读取当前速度作为启动时日志
+        try:
+            self.speed = float(get_config('tts_speed', getattr(self, 'speed', 1.0)))
+        except Exception:
+            pass
+        logger.info("[SovitsTTS] 开始流式播放，speed=%.3f, chunk=%d, sample_rate=%d", getattr(self, 'speed', 1.0), self.chunk, self.sample_rate)
         for chunk in audio_stream:
-            if chunk is not None and len(chunk)>0:          
-                #stream = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32767
-                #stream = resampy.resample(x=stream, sr_orig=32000, sr_new=self.sample_rate)
-                byte_stream=BytesIO(chunk)
-                stream = self.__create_bytes_stream(byte_stream)
-                streamlen = stream.shape[0]
-                idx=0
-                while streamlen >= self.chunk:
-                    eventpoint=None
-                    if first:
-                        eventpoint={'status':'start','text':text,'msgevent':textevent}
-                        first = False
-                    self.parent.put_audio_frame(stream[idx:idx+self.chunk],eventpoint)
-                    streamlen -= self.chunk
-                    idx += self.chunk
-        eventpoint={'status':'end','text':text,'msgevent':textevent}
-        self.parent.put_audio_frame(np.zeros(self.chunk,np.float32),eventpoint)
+            if chunk is None or len(chunk) == 0:
+                continue
+            # 每块开始时尝试刷新速度，便于运行时动态调节
+            try:
+                new_speed = float(get_config('tts_speed', getattr(self, 'speed', 1.0)))
+                if abs(new_speed - getattr(self, 'speed', 1.0)) > 1e-6:
+                    logger.info("[SovitsTTS] 检测到配置更新，语速从 %.3f -> %.3f", getattr(self, 'speed', 1.0), new_speed)
+                self.speed = new_speed
+            except Exception:
+                pass
+            # 将字节块解码为对齐到 self.sample_rate 的 float32 单通道流
+            logger.debug("[SovitsTTS] 收到网络块 bytes=%d", len(chunk))
+            byte_stream = BytesIO(chunk)
+            stream = self.__create_bytes_stream(byte_stream)
+            if stream is None or stream.shape[0] == 0:
+                logger.debug("[SovitsTTS] 解码后为空，跳过该块")
+                continue
+            # 拼接上次残留，确保跨块连续
+            if last_stream is not None and last_stream.shape[0] > 0:
+                logger.debug("[SovitsTTS] 拼接上次残留 samples=%d -> 当前块 samples=%d", last_stream.shape[0], stream.shape[0])
+                stream = np.concatenate([last_stream, stream], axis=0)
+                last_stream = None
+            logger.debug("[SovitsTTS] 解码合并后 samples=%d", stream.shape[0])
+            # 在分片前统一做不变调变速
+            before_len = stream.shape[0]
+            stream = self.__time_stretch(stream)
+            logger.debug("[SovitsTTS] 变速 speed=%.3f: %d -> %d samples", getattr(self, 'speed', 1.0), before_len, stream.shape[0])
+
+            streamlen = stream.shape[0]
+            idx = 0
+            frames_out = 0
+            while streamlen >= self.chunk and self.state == State.RUNNING:
+                eventpoint = None
+                if first:
+                    eventpoint = {'status': 'start', 'text': text, 'msgevent': textevent}
+                    first = False
+                self.parent.put_audio_frame(stream[idx:idx + self.chunk], eventpoint)
+                streamlen -= self.chunk
+                idx += self.chunk
+                frames_out += 1
+            logger.debug("[SovitsTTS] 本块输出帧数=%d, 剩余未满一帧 samples=%d", frames_out, streamlen)
+            # 剩余不足一帧的部分缓存，待下块拼接
+            last_stream = stream[idx:]
+            if last_stream is not None:
+                logger.debug("[SovitsTTS] 缓存残留 samples=%d", last_stream.shape[0])
+
+        # 结束事件：不强行补齐尾巴，按现有逻辑发送一帧静音做收尾
+        logger.info("[SovitsTTS] 流式播放结束，发送结束事件")
+        eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
+        self.parent.put_audio_frame(np.zeros(self.chunk, np.float32), eventpoint)
 
 ###########################################################################################
 class CosyVoiceTTS(BaseTTS):
