@@ -268,6 +268,7 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     app.router.add_get("/training/progress/{task_id}", training_api.get_training_progress)  # 获取训练任务进度
     app.router.add_get("/training/tasks", training_api.list_training_tasks)  # 获取所有训练任务列表
     app.router.add_post("/training/cancel/{task_id}", training_api.cancel_training_task)  # 取消训练任务
+    app.router.add_delete("/training/delete/{task_id}", training_api.delete_training_task_api)  # 删除训练任务
     
     # TTS试听接口
     app.router.add_post("/preview_tts", tts_api.preview_tts)  # TTS试听接口

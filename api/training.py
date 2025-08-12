@@ -2,6 +2,7 @@
 训练相关API接口
 """
 import json
+import shutil
 import asyncio
 import time
 import uuid
@@ -1164,3 +1165,169 @@ class TrainingAPI:
                 "error": str(e),
                 "message": "取消训练任务时发生错误"
             }, status=200) 
+    
+    async def delete_training_task_api(self, request):
+        """
+        删除训练任务
+        
+        ---
+        tags:
+          - Training
+        summary: 删除训练任务
+        description: 删除指定的训练任务（需要认证，仅限 avatar 或 action 类型；正在训练中的任务不可删除）
+        produces:
+          - application/json
+        security:
+          - Bearer: []
+        parameters:
+          - in: header
+            name: Authorization
+            required: true
+            type: string
+            description: Bearer token for authentication
+          - in: path
+            name: task_id
+            required: true
+            type: string
+            description: 任务ID
+        responses:
+          200:
+            description: 删除成功
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  description: 是否成功
+                message:
+                  type: string
+                  description: 状态消息
+                task_id:
+                  type: string
+                  description: 任务ID
+          401:
+            description: 认证失败
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  description: 是否成功
+                error:
+                  type: string
+                  description: 错误信息
+                message:
+                  type: string
+                  description: 错误描述
+        """
+        logger.info("=== 开始处理删除训练任务请求 ===")
+        
+        # 验证token
+        if self.auth_api:
+            logger.info("开始验证认证token")
+            auth_result = await self._verify_auth(request)
+            if auth_result:
+                logger.warning("认证验证失败")
+                return auth_result
+            logger.info("认证验证成功")
+        
+        try:
+            task_id = request.match_info.get('task_id')
+            logger.info(f"请求删除任务: {task_id}")
+            
+            if not task_id:
+                logger.error("缺少任务ID参数")
+                return web.json_response({
+                    "success": False,
+                    "error": "缺少任务ID",
+                    "message": "请提供任务ID"
+                }, status=200)
+            
+            task = self.safe_get_training_task(task_id)
+            if not task:
+                logger.warning(f"任务不存在: {task_id}")
+                return web.json_response({
+                    "success": False,
+                    "error": "任务不存在",
+                    "message": f"任务ID {task_id} 不存在"
+                }, status=200)
+            
+            # 仅允许删除 avatar 或 action 类型
+            if task.train_type not in ["avatar", "action"]:
+                logger.warning(f"任务 {task_id} 的类型 {task.train_type} 不允许删除")
+                return web.json_response({
+                    "success": False,
+                    "error": "类型不允许删除",
+                    "message": f"仅支持删除 avatar 或 action 类型的任务"
+                }, status=400)
+            
+            # 正在训练中的任务不允许删除
+            if task.status in ["processing", "training"]:
+                logger.warning(f"任务 {task_id} 正在{task.status}，不可删除")
+                return web.json_response({
+                    "success": False,
+                    "error": "任务正在进行中",
+                    "message": f"任务状态为 {task.status}，不可删除，请先取消"
+                }, status=400)
+            
+            # 在删除任务记录前，尝试清理相关文件/目录
+            try:
+                # 删除下载的视频临时文件（如果存在）
+                if hasattr(task, 'video_path') and task.video_path and Path(task.video_path).exists():
+                    try:
+                        logger.info(f"删除任务临时视频文件: {task.video_path}")
+                        Path(task.video_path).unlink(missing_ok=True)
+                    except Exception as e:
+                        logger.warning(f"删除临时视频文件失败: {e}")
+
+                # 删除训练输出目录
+                if task.train_type == "avatar":
+                    target_dir = Path("data/avatars") / task.video_name
+                    if target_dir.exists() and target_dir.is_dir():
+                        logger.info(f"删除头像训练目录: {target_dir}")
+                        shutil.rmtree(target_dir, ignore_errors=True)
+                elif task.train_type == "action":
+                    target_dir = Path("data/customvideo") / task.video_name
+                    if target_dir.exists() and target_dir.is_dir():
+                        logger.info(f"删除动作训练目录: {target_dir}")
+                        shutil.rmtree(target_dir, ignore_errors=True)
+                    # 同步更新 custom_config.json，移除对应配置
+                    try:
+                        custom_config_path = Path("data/custom_config.json")
+                        if custom_config_path.exists():
+                            with open(custom_config_path, 'r', encoding='utf-8') as f:
+                                config_data = json.load(f)
+                            original_len = len(config_data) if isinstance(config_data, list) else 0
+                            if isinstance(config_data, list):
+                                filtered = [item for item in config_data if item.get('audiotype') != task.video_name]
+                                if len(filtered) != original_len:
+                                    with open(custom_config_path, 'w', encoding='utf-8') as f:
+                                        json.dump(filtered, f, ensure_ascii=False, indent=2)
+                                    logger.info(f"已从 custom_config.json 移除 audiotype={task.video_name} 的配置")
+                    except Exception as e:
+                        logger.warning(f"更新 custom_config.json 失败: {e}")
+            except Exception as e:
+                logger.warning(f"清理任务相关文件时发生错误: {e}")
+
+            # 删除任务（线程安全）
+            logger.info(f"开始删除任务: {task_id}")
+            with self.training_tasks_lock:
+                if task_id in self.training_tasks:
+                    del self.training_tasks[task_id]
+            
+            # 持久化保存
+            self.save_training_tasks_to_file()
+            logger.info(f"任务 {task_id} 删除成功")
+            
+            return web.json_response({
+                "success": True,
+                "message": "任务已删除",
+                "task_id": task_id
+            })
+        except Exception as e:
+            logger.error(f"删除训练任务失败: {e}")
+            return web.json_response({
+                "success": False,
+                "error": str(e),
+                "message": "删除训练任务时发生错误"
+            }, status=200)
