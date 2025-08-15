@@ -144,17 +144,50 @@ class DynamicConfig:
         logger.info(f"已注册配置回调: {key}")
     
     def _trigger_callbacks(self, old_config: Dict, new_config: Dict):
-        """触发配置变化回调"""
+        """触发配置变化回调（支持深度对比并按点号路径触发）"""
+        def trigger_for_key(key_path: str, old_val, new_val):
+            if key_path in self.callbacks and old_val != new_val:
+                for callback in self.callbacks[key_path]:
+                    try:
+                        callback(key_path, old_val, new_val)
+                    except Exception as e:
+                        logger.error(f"配置回调执行失败 {key_path}: {e}")
+
+        def deep_diff(old_obj, new_obj, prefix: str = ""):
+            # 如果两边都是字典，逐项比较
+            if isinstance(old_obj, dict) and isinstance(new_obj, dict):
+                keys = set(old_obj.keys()) | set(new_obj.keys())
+                for k in keys:
+                    old_v = old_obj.get(k)
+                    new_v = new_obj.get(k)
+                    key_path = f"{prefix}.{k}" if prefix else k
+                    # 若整个子树对象从字典变为非字典（或反之），同时触发顶层与具体路径
+                    if isinstance(old_v, dict) and isinstance(new_v, dict):
+                        # 先对比子项
+                        deep_diff(old_v, new_v, key_path)
+                        # 若整棵子树对象引用变化也尝试触发该聚合键
+                        if old_v != new_v:
+                            trigger_for_key(key_path, old_v, new_v)
+                    else:
+                        # 叶子或类型改变，触发叶子键
+                        if old_v != new_v:
+                            trigger_for_key(key_path, old_v, new_v)
+            else:
+                # 非字典的顶层替换，触发前缀（顶层键）
+                if prefix:
+                    trigger_for_key(prefix, old_obj, new_obj)
+
+        # 先触发顶层键的变化，保持向后兼容
         for key in set(old_config.keys()) | set(new_config.keys()):
             old_value = old_config.get(key)
             new_value = new_config.get(key)
-            
-            if old_value != new_value and key in self.callbacks:
-                for callback in self.callbacks[key]:
-                    try:
-                        callback(key, old_value, new_value)
-                    except Exception as e:
-                        logger.error(f"配置回调执行失败 {key}: {e}")
+            if old_value != new_value:
+                # 顶层键触发
+                trigger_for_key(key, old_value, new_value)
+                # 深度触发（为嵌套键生成点号路径回调）
+                deep_diff(old_value if isinstance(old_value, dict) else {},
+                          new_value if isinstance(new_value, dict) else {},
+                          key)
     
     def start_monitoring(self, interval: float = 1.0):
         """开始监控配置文件变化"""

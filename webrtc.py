@@ -27,12 +27,20 @@ from av import AudioFrame
 import fractions
 import numpy as np
 
-AUDIO_PTIME = 0.020  # 20ms audio packetization
-VIDEO_CLOCK_RATE = 90000
-VIDEO_PTIME = 0.040 #1 / 25  # 30fps
-VIDEO_TIME_BASE = fractions.Fraction(1, VIDEO_CLOCK_RATE)
-SAMPLE_RATE = 16000
-AUDIO_TIME_BASE = fractions.Fraction(1, SAMPLE_RATE)
+# ========================= 常量配置（单位说明） =========================
+# AUDIO_PTIME: 音频打包时长（秒）。0.020 表示每20ms生成一包音频，常见于实时语音/低延迟场景。
+# VIDEO_CLOCK_RATE: 视频时钟频率（Hz）。RTP 规范中视频常用 90000Hz 作为时间基准。
+# VIDEO_PTIME: 视频帧间隔（秒）。0.040 ≈ 1/25，对应 25fps；如需 30fps 可改为 1/30 ≈ 0.0333。
+# VIDEO_TIME_BASE: 视频时间基，用于计算和表示视频 PTS（基于 VIDEO_CLOCK_RATE）。
+# SAMPLE_RATE: 音频采样率（Hz）。此处采用 16000Hz（16k），需与 TTS/解码端保持一致。
+# AUDIO_TIME_BASE: 音频时间基，用于计算和表示音频 PTS（基于 SAMPLE_RATE）。
+# ---------------------------------------------------------------------
+AUDIO_PTIME = 0.020  # 音频打包时长（20ms/包） 
+VIDEO_CLOCK_RATE = 90000  # 视频RTP时钟频率（90kHz）
+VIDEO_PTIME = 0.040  # 视频帧间隔（约25fps） 
+VIDEO_TIME_BASE = fractions.Fraction(1, VIDEO_CLOCK_RATE)  # 视频时间基
+SAMPLE_RATE = 16000  # 音频采样率（16kHz）
+AUDIO_TIME_BASE = fractions.Fraction(1, SAMPLE_RATE)  # 音频时间基
 
 #from aiortc.contrib.media import MediaPlayer, MediaRelay
 #from aiortc.rtcrtpsender import RTCRtpSender
@@ -108,12 +116,12 @@ class BitrateMonitor:
     
     def __init__(self, config=None):
         self.config = config or {}
-        self.max_bitrate = self.config.get('max_bitrate', 2000000)
-        self.min_bitrate = self.config.get('min_bitrate', 500000)
-        self.current_bitrate = self.config.get('start_bitrate', 1000000)
-        self.bitrate_history = []
-        self.fps_history = []
-        self.last_adjustment = time.time()
+        self.max_bitrate = self.config.get('max_bitrate', 2000000) # 视频最大码率
+        self.min_bitrate = self.config.get('min_bitrate', 500000) # 视频最小码率
+        self.current_bitrate = self.config.get('start_bitrate', 1000000) # 视频起始码率
+        self.bitrate_history = [] # 码率历史记录
+        self.fps_history = [] # 帧率历史记录
+        self.last_adjustment = time.time() # 上次调整时间
         self.adjustment_interval = 10  # 10秒调整一次
         
     def update_metrics(self, fps, queue_size):
@@ -212,6 +220,15 @@ class PlayerStreamTrack(MediaStreamTrack):
     _start: float
     _timestamp: int
 
+    def reset_timeline(self, base_time: float) -> None:
+        """
+        重置该轨道的时间轴，使音频和视频共享同一个起点，避免首帧后各自漂移。
+        """
+        # 使用相同的起点，并将时间戳/计数归零
+        self._start = base_time
+        self._timestamp = 0
+        self.current_frame_count = 0
+
     async def next_timestamp(self) -> Tuple[int, fractions.Fraction]:
         if self.readyState != "live":
             raise Exception
@@ -299,6 +316,46 @@ class PlayerStreamTrack(MediaStreamTrack):
                 pass
         
         frame,eventpoint = await self._queue.get()
+
+        # 首帧门控：等待音频与视频首帧同时就绪或超时
+        try:
+            if not self._player._gate_open:
+                now = time.time()
+                # 记录首帧到达时间
+                with self._player._gate_lock:
+                    if self.kind == 'audio' and self._player._first_audio_ts is None:
+                        self._player._first_audio_ts = now
+                        mylogger.info(f"[SyncGate] 首个音频包到达 t_audio0={now:.6f}s")
+                    if self.kind == 'video' and self._player._first_video_ts is None:
+                        self._player._first_video_ts = now
+                        mylogger.info(f"[SyncGate] 首帧视频到达 t_video0={now:.6f}s")
+
+                    # 判断是否开闸
+                    audio_ok = self._player._first_audio_ts is not None
+                    video_ok = self._player._first_video_ts is not None
+                    timeout_ok = (now - self._player._gate_start_ts) >= self._player._sync_gate_s
+                    if (audio_ok and video_ok) or timeout_ok:
+                        self._player._gate_open = True
+                        delta0 = None
+                        if audio_ok and video_ok:
+                            delta0 = self._player._first_audio_ts - self._player._first_video_ts
+                        # 统一时间基准：音频与视频共享同一个基准时间，避免开闸后各自漂移
+                        base_time = time.time()
+                        try:
+                            self._player.audio.reset_timeline(base_time)
+                            self._player.video.reset_timeline(base_time)
+                        except Exception as _e:
+                            mylogger.warning(f"[SyncGate] 重置时间轴失败: {_e}")
+                        mylogger.info(
+                            f"[SyncGate] 开闸 | 超时={timeout_ok} | delta0={delta0:.3f}s | base={base_time:.6f}s" if delta0 is not None else f"[SyncGate] 开闸 | 超时={timeout_ok} | base={base_time:.6f}s"
+                        )
+
+                # 若未开闸，则等待直到开闸或再次检查（不丢弃帧，阻塞当前轨道首帧）
+                while not self._player._gate_open:
+                    await asyncio.sleep(0.005)
+        except Exception as e:
+            mylogger.warning(f"[SyncGate] 门控异常: {e}")
+
         pts, time_base = await self.next_timestamp()
         frame.pts = pts
         frame.time_base = time_base
@@ -384,7 +441,16 @@ class HumanPlayer:
 
         # 获取推流质量配置
         streaming_config = getattr(nerfreal, 'streaming_quality', {})
-        
+        # 首帧门控配置（默认100ms）
+        self._sync_gate_ms = float(streaming_config.get('sync_gate_ms', 100))
+        self._sync_gate_s = self._sync_gate_ms / 1000.0
+        # 首帧门控状态
+        self._gate_open = False
+        self._gate_start_ts = time.time()
+        self._first_audio_ts = None
+        self._first_video_ts = None
+        self._gate_lock = threading.Lock()
+
         self.__audio = PlayerStreamTrack(self, kind="audio", config=streaming_config)
         self.__video = PlayerStreamTrack(self, kind="video", config=streaming_config)
 

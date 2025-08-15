@@ -1309,6 +1309,155 @@ class TrainingAPI:
             except Exception as e:
                 logger.warning(f"清理任务相关文件时发生错误: {e}")
 
+            # 检查并自动删除关联的 action 任务（task_id + "_action"）
+            try:
+                # 仅当原始 task_id 未以 "_action" 结尾时才尝试关联删除
+                if task_id and not task_id.endswith("_action"):
+                    related_task_id = f"{task_id}_action"
+                    # 直接从内存字典获取，避免封装方法未命中
+                    related_task = self.training_tasks.get(related_task_id)
+                    # 兼容对象或字典结构
+                    related_type = getattr(related_task, 'train_type', None) if related_task is not None else None
+                    if related_type is None and isinstance(related_task, dict):
+                        related_type = related_task.get('train_type')
+                    if related_task and related_type == 'action':
+                        logger.info(f"检测到关联的 action 任务，将尝试自动删除: {related_task_id}")
+                        # 正在训练中的任务不允许删除
+                        related_status = getattr(related_task, 'status', None)
+                        if related_status is None and isinstance(related_task, dict):
+                            related_status = related_task.get('status')
+                        if related_status in ["processing", "training"]:
+                            logger.warning(f"关联任务 {related_task_id} 正在{related_status}，跳过自动删除")
+                        else:
+                            # 关联任务文件清理（与 action 类型一致）
+                            try:
+                                related_video_path = getattr(related_task, 'video_path', None)
+                                if related_video_path is None and isinstance(related_task, dict):
+                                    related_video_path = related_task.get('video_path')
+                                if related_video_path and Path(related_video_path).exists():
+                                    try:
+                                        logger.info(f"删除关联任务临时视频文件: {related_video_path}")
+                                        Path(related_video_path).unlink(missing_ok=True)
+                                    except Exception as e:
+                                        logger.warning(f"删除关联任务临时视频文件失败: {e}")
+
+                                related_video_name = getattr(related_task, 'video_name', None)
+                                if related_video_name is None and isinstance(related_task, dict):
+                                    related_video_name = related_task.get('video_name')
+                                target_dir = Path("data/customvideo") / str(related_video_name)
+                                if target_dir.exists() and target_dir.is_dir():
+                                    logger.info(f"删除关联动作训练目录: {target_dir}")
+                                    shutil.rmtree(target_dir, ignore_errors=True)
+
+                                # 同步更新 custom_config.json，移除对应配置
+                                try:
+                                    custom_config_path = Path("data/custom_config.json")
+                                    if custom_config_path.exists():
+                                        with open(custom_config_path, 'r', encoding='utf-8') as f:
+                                            config_data = json.load(f)
+                                        original_len = len(config_data) if isinstance(config_data, list) else 0
+                                        if isinstance(config_data, list):
+                                            filtered = [item for item in config_data if item.get('audiotype') != related_video_name]
+                                            if len(filtered) != original_len:
+                                                with open(custom_config_path, 'w', encoding='utf-8') as f:
+                                                    json.dump(filtered, f, ensure_ascii=False, indent=2)
+                                                logger.info(f"已从 custom_config.json 移除 audiotype={related_video_name} 的配置（关联任务）")
+                                except Exception as e:
+                                    logger.warning(f"更新 custom_config.json（关联任务）失败: {e}")
+                            except Exception as e:
+                                logger.warning(f"清理关联 action 任务相关文件时发生错误: {e}")
+
+                            # 删除关联任务（线程安全）
+                            with self.training_tasks_lock:
+                                if related_task_id in self.training_tasks:
+                                    del self.training_tasks[related_task_id]
+                                    logger.info(f"关联任务 {related_task_id} 删除成功")
+                            # 持久化保存
+                            self.save_training_tasks_to_file()
+                    else:
+                        # Fallback：遍历查找可能的关联 action 任务
+                        try:
+                            logger.info(f"未直接命中 {related_task_id}，开始遍历查找关联 action 任务")
+                            candidates = []
+                            with self.training_tasks_lock:
+                                for tk, tv in self.training_tasks.items():
+                                    # 统一取字段
+                                    tv_type = getattr(tv, 'train_type', None)
+                                    if tv_type is None and isinstance(tv, dict):
+                                        tv_type = tv.get('train_type')
+                                    if tv_type != 'action':
+                                        continue
+                                    tv_tid = getattr(tv, 'task_id', None)
+                                    if tv_tid is None and isinstance(tv, dict):
+                                        tv_tid = tv.get('task_id')
+                                    tv_vn = getattr(tv, 'video_name', None)
+                                    if tv_vn is None and isinstance(tv, dict):
+                                        tv_vn = tv.get('video_name')
+                                    # 匹配条件：task_id 完全匹配，或 video_name 含主 id 且以 _action 结尾
+                                    if tk == related_task_id or tv_tid == related_task_id or (str(task_id) in str(tv_vn) and str(tv_vn).endswith('_action')):
+                                        candidates.append((tk, tv))
+
+                            if not candidates:
+                                logger.info(f"未找到任何可删除的关联 action 任务，related_task_id={related_task_id}")
+                            else:
+                                logger.info(f"找到 {len(candidates)} 个关联 action 任务候选，将尝试删除")
+                                for del_id, del_task in candidates:
+                                    del_status = getattr(del_task, 'status', None)
+                                    if del_status is None and isinstance(del_task, dict):
+                                        del_status = del_task.get('status')
+                                    if del_status in ["processing", "training"]:
+                                        logger.warning(f"关联任务 {del_id} 正在{del_status}，跳过")
+                                        continue
+
+                                    # 清理文件
+                                    try:
+                                        del_video_path = getattr(del_task, 'video_path', None)
+                                        if del_video_path is None and isinstance(del_task, dict):
+                                            del_video_path = del_task.get('video_path')
+                                        if del_video_path and Path(del_video_path).exists():
+                                            try:
+                                                logger.info(f"删除关联任务临时视频文件: {del_video_path}")
+                                                Path(del_video_path).unlink(missing_ok=True)
+                                            except Exception as e:
+                                                logger.warning(f"删除关联任务临时视频文件失败: {e}")
+
+                                        del_video_name = getattr(del_task, 'video_name', None)
+                                        if del_video_name is None and isinstance(del_task, dict):
+                                            del_video_name = del_task.get('video_name')
+                                        tdir = Path("data/customvideo") / str(del_video_name)
+                                        if tdir.exists() and tdir.is_dir():
+                                            logger.info(f"删除关联动作训练目录: {tdir}")
+                                            shutil.rmtree(tdir, ignore_errors=True)
+
+                                        # 更新 custom_config.json
+                                        try:
+                                            custom_config_path = Path("data/custom_config.json")
+                                            if custom_config_path.exists():
+                                                with open(custom_config_path, 'r', encoding='utf-8') as f:
+                                                    config_data = json.load(f)
+                                                orig_len = len(config_data) if isinstance(config_data, list) else 0
+                                                if isinstance(config_data, list):
+                                                    filtered = [item for item in config_data if item.get('audiotype') != del_video_name]
+                                                    if len(filtered) != orig_len:
+                                                        with open(custom_config_path, 'w', encoding='utf-8') as f:
+                                                            json.dump(filtered, f, ensure_ascii=False, indent=2)
+                                                        logger.info(f"已从 custom_config.json 移除 audiotype={del_video_name} 的配置（关联任务）")
+                                        except Exception as e:
+                                            logger.warning(f"更新 custom_config.json（关联任务）失败: {e}")
+                                    except Exception as e:
+                                        logger.warning(f"清理关联 action 任务相关文件时发生错误: {e}")
+
+                                    # 删除任务并持久化
+                                    with self.training_tasks_lock:
+                                        if del_id in self.training_tasks:
+                                            del self.training_tasks[del_id]
+                                            logger.info(f"关联任务 {del_id} 删除成功")
+                                            self.save_training_tasks_to_file()
+                        except Exception as e:
+                            logger.warning(f"遍历删除关联 action 任务时发生错误: {e}")
+            except Exception as e:
+                logger.warning(f"自动删除关联 action 任务时发生错误: {e}")
+
             # 删除任务（线程安全）
             logger.info(f"开始删除任务: {task_id}")
             with self.training_tasks_lock:

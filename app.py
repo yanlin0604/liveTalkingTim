@@ -286,14 +286,21 @@ if __name__ == '__main__':
         config_data = dynamic_config.get_all()
         
         # 用配置文件的值覆盖命令行默认值（但不覆盖用户明确指定的参数）
+        # 同时注入 argparse 未声明但需要使用的新增键（例如: streaming_quality）
         for key, value in config_data.items():
-            if hasattr(opt, key) and value is not None:
+            if value is None:
+                continue
+            if hasattr(opt, key):
                 # 只有当命令行参数是默认值时才覆盖
                 parser_default = parser.get_default(key)
                 current_value = getattr(opt, key)
                 if current_value == parser_default:
                     setattr(opt, key, value)
                     logger.info(f"从配置文件应用参数: {key} = {value}")
+            else:
+                # 注入未在 argparse 中声明的配置键（顶层），如 streaming_quality 等
+                setattr(opt, key, value)
+                logger.info(f"从配置文件注入新增参数: {key} = {value}")
     
     # 启动配置文件监控
     start_config_monitoring(interval=2.0)
@@ -303,20 +310,6 @@ if __name__ == '__main__':
     
     logger.info("动态配置系统已启动")
 
-    # 智能配置调整
-    if opt.auto_batch_size:
-        if opt.transport == 'webrtc':
-            # WebRTC实时场景：优先低延迟
-            opt.batch_size = min(opt.batch_size, 8)
-            logger.info(f"WebRTC模式：自动调整batch_size为 {opt.batch_size} (低延迟优化)")
-        elif opt.transport == 'virtualcam':
-            # 虚拟摄像头：平衡延迟和效率
-            opt.batch_size = min(opt.batch_size, 12)
-            logger.info(f"VirtualCam模式：自动调整batch_size为 {opt.batch_size} (平衡优化)")
-        elif opt.transport == 'rtcpush':
-            # 推流场景：可以接受稍高延迟
-            opt.batch_size = min(opt.batch_size, 16)
-            logger.info(f"RTC推流模式：自动调整batch_size为 {opt.batch_size} (效率优化)")
 
     # 配置验证和建议
     if opt.transport == 'webrtc' and opt.batch_size > 12:

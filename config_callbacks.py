@@ -5,148 +5,81 @@
 """
 
 from logger import logger
-from dynamic_config import register_config_callback
+from dynamic_config import register_config_callback, get_all_config
 
 def setup_config_callbacks(opt, nerfreals):
     """设置配置变化回调"""
     
-    def on_batch_size_change(key, old_value, new_value):
-        """批次大小变化回调"""
+    def _coerce_like(old_val, new_val):
+        """将 new_val 尽量转换成与 old_val 相同的类型，失败则原样返回"""
         try:
-            opt.batch_size = int(new_value)
-            logger.info(f"批次大小已更新: {old_value} -> {new_value}")
-            
-            # 通知所有活跃的数字人实例
-            for sessionid, nerfreal in nerfreals.items():
-                if nerfreal and hasattr(nerfreal, 'update_batch_size'):
-                    nerfreal.update_batch_size(int(new_value))
-                    
-        except Exception as e:
-            logger.error(f"更新批次大小失败: {e}")
-    
-    def on_tts_change(key, old_value, new_value):
-        """TTS配置变化回调"""
-        try:
-            setattr(opt, key, new_value)
-            logger.info(f"TTS配置已更新: {key} = {old_value} -> {new_value}")
-            
-            # 通知所有活跃的数字人实例更新TTS配置
-            for sessionid, nerfreal in nerfreals.items():
-                if nerfreal and hasattr(nerfreal, 'update_tts_config'):
-                    nerfreal.update_tts_config(key, new_value)
-                    
-        except Exception as e:
-            logger.error(f"更新TTS配置失败: {e}")
-    
-    def on_llm_change(key, old_value, new_value):
-        """LLM配置变化回调"""
-        try:
-            setattr(opt, key, new_value)
-            logger.info(f"LLM配置已更新: {key} = {old_value} -> {new_value}")
-            
-            # 更新LLM配置
-            if key == 'llm_system_prompt':
-                # 重新初始化LLM系统提示词
-                from llm import update_system_prompt
-                if 'update_system_prompt' in globals():
-                    update_system_prompt(new_value)
-                    
-        except Exception as e:
-            logger.error(f"更新LLM配置失败: {e}")
-    
-    def on_color_matching_change(key, old_value, new_value):
-        """颜色匹配配置变化回调"""
-        try:
-            if key == 'enable_color_matching':
-                opt.enable_color_matching = bool(new_value)
-            elif key == 'color_matching_strength':
-                opt.color_matching_strength = float(new_value)
-                
-            logger.info(f"颜色匹配配置已更新: {key} = {old_value} -> {new_value}")
-            
-            # 通知所有活跃的数字人实例
-            for sessionid, nerfreal in nerfreals.items():
-                if nerfreal and hasattr(nerfreal, 'update_color_matching'):
-                    nerfreal.update_color_matching(
-                        opt.enable_color_matching, 
-                        opt.color_matching_strength
-                    )
-                    
-        except Exception as e:
-            logger.error(f"更新颜色匹配配置失败: {e}")
-    
-    def on_custom_silent_change(key, old_value, new_value):
-        """自定义静默动作相关配置变化回调"""
-        try:
-            if key == 'custom_silent_audiotype':
-                opt.custom_silent_audiotype = str(new_value or "")
-                logger.info(f"静默动作类型已更新: {old_value or '未指定'} -> {opt.custom_silent_audiotype or '未指定'}")
-                # 推送到所有实例：运行时立即重新加载自定义动作
-                for sessionid, nerfreal in nerfreals.items():
-                    if nerfreal and hasattr(nerfreal, 'set_custom_silent_audiotype'):
-                        nerfreal.set_custom_silent_audiotype(opt.custom_silent_audiotype)
-            elif key == 'use_custom_silent':
-                # 允许布尔/字符串输入
-                val = bool(new_value)
-                opt.use_custom_silent = val
-                logger.info(f"静默自定义动作开关更新: {old_value} -> {val}")
-                for sessionid, nerfreal in nerfreals.items():
-                    if nerfreal and hasattr(nerfreal, 'set_use_custom_silent'):
-                        nerfreal.set_use_custom_silent(val)
-        except Exception as e:
-            logger.error(f"更新自定义静默动作配置失败: {e}")
+            if isinstance(old_val, bool):
+                # 支持多种布尔表示
+                if isinstance(new_val, str):
+                    return new_val.strip().lower() in ("1", "true", "yes", "on")
+                return bool(new_val)
+            if isinstance(old_val, int) and not isinstance(old_val, bool):
+                return int(new_val)
+            if isinstance(old_val, float):
+                return float(new_val)
+        except Exception:
+            pass
+        return new_val
 
-    def on_avatar_change(key, old_value, new_value):
-        """数字人ID变化回调"""
+    def on_any_change(key, old_value, new_value):
+        """通用配置变化回调：监控与即时生效分发"""
         try:
-            opt.avatar_id = str(new_value)
-            logger.info(f"数字人ID已更新: {old_value} -> {new_value}")
-            logger.warning("数字人ID变化需要重新创建会话才能生效")
-            
-        except Exception as e:
-            logger.error(f"更新数字人ID失败: {e}")
-    
-    def on_restart_required_change(key, old_value, new_value):
-        """需要重启的配置变化回调"""
-        try:
-            setattr(opt, key, new_value)
-            logger.warning(f"配置 {key} 已更新: {old_value} -> {new_value}")
-            logger.warning("此配置需要重启服务才能生效")
-            
-        except Exception as e:
-            logger.error(f"更新配置失败: {e}")
-    
-    # 注册回调
-    register_config_callback('batch_size', on_batch_size_change)
-    
-    # TTS相关回调
-    register_config_callback('tts', on_tts_change)
-    register_config_callback('REF_FILE', on_tts_change)
-    register_config_callback('REF_TEXT', on_tts_change)
-    register_config_callback('TTS_SERVER', on_tts_change)
-    
-    # LLM相关回调
-    register_config_callback('llm_provider', on_llm_change)
-    register_config_callback('llm_model', on_llm_change)
-    register_config_callback('llm_system_prompt', on_llm_change)
-    register_config_callback('ollama_host', on_llm_change)
-    
-    # 颜色匹配回调
-    register_config_callback('enable_color_matching', on_color_matching_change)
-    register_config_callback('color_matching_strength', on_color_matching_change)
-    
-    # 自定义静默动作回调
-    register_config_callback('custom_silent_audiotype', on_custom_silent_change)
-    register_config_callback('use_custom_silent', on_custom_silent_change)
+            logger.info(f"配置变更: {key} = {old_value} -> {new_value}")
 
-    # 数字人相关回调
-    register_config_callback('avatar_id', on_avatar_change)
+            # 0) 尝试将 opt 中同名字段也更新（若存在则按原类型做转换）
+            if hasattr(opt, key):
+                try:
+                    casted = _coerce_like(getattr(opt, key), new_value)
+                    setattr(opt, key, casted)
+                except Exception:
+                    setattr(opt, key, new_value)
+
+            # 1) 通用广播：实例若实现 on_config_change 或 update_config，则全部分发
+            for _, nerfreal in nerfreals.items():
+                if not nerfreal:
+                    continue
+                if hasattr(nerfreal, 'on_config_change'):
+                    try:
+                        nerfreal.on_config_change(key, old_value, new_value)
+                    except Exception as be:
+                        logger.warning(f"实例 on_config_change 处理失败: key={key}, err={be}")
+                elif hasattr(nerfreal, 'update_config'):
+                    try:
+                        nerfreal.update_config(key, new_value)
+                    except Exception as be:
+                        logger.warning(f"实例 update_config 处理失败: key={key}, err={be}")
+
+        except Exception as e:
+            logger.error(f"通用配置变化处理失败: {key}, 错误: {e}")
     
-    # 需要重启的配置
-    register_config_callback('model', on_restart_required_change)
-    register_config_callback('transport', on_restart_required_change)
-    register_config_callback('listenport', on_restart_required_change)
-    register_config_callback('max_session', on_restart_required_change)
-    register_config_callback('model_path', on_restart_required_change)
+    
+
+    
+    # 为所有配置参数（含嵌套）注册通用监控回调
+    def _flatten_keys(d, prefix=""):
+        for k, v in d.items():
+            if k.startswith('//') or k == '_descriptions':
+                continue
+            path = f"{prefix}.{k}" if prefix else k
+            yield path
+            if isinstance(v, dict):
+                # 继续向下展开
+                yield from _flatten_keys(v, path)
+
+    try:
+        current_cfg = get_all_config() or {}
+        for key_path in _flatten_keys(current_cfg):
+            try:
+                register_config_callback(key_path, on_any_change)
+            except Exception as e:
+                logger.warning(f"注册通用回调失败: {key_path}, 错误: {e}")
+        logger.info("已为所有配置参数注册通用监控回调")
+    except Exception as e:
+        logger.error(f"展开并注册通用配置回调失败: {e}")
     
     logger.info("配置变化回调已设置完成")

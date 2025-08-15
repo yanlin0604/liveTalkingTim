@@ -28,6 +28,8 @@ import hashlib
 import base64
 import json
 import uuid
+import logging
+from logging.handlers import RotatingFileHandler
 
 from typing import Iterator
 
@@ -47,6 +49,40 @@ if TYPE_CHECKING:
 
 from logger import logger
 from dynamic_config import get_config, get_nested_config
+
+# === TTS 专用日志（独立文件：logs/tts.log，大小轮转）===
+_TTS_LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+_TTS_LOG_PATH = os.path.join(_TTS_LOG_DIR, "tts.log")
+
+def _setup_tts_logger():
+    """初始化 TTS 专用日志记录器。
+    - 文件: logs/tts.log
+    - 轮转: 2MB, 保留 5 个历史
+    - 编码: utf-8
+    """
+    tl = logging.getLogger("tts")
+    if tl.handlers:
+        return tl
+    tl.setLevel(logging.DEBUG)
+    try:
+        os.makedirs(_TTS_LOG_DIR, exist_ok=True)
+    except Exception:
+        pass
+    try:
+        fh = RotatingFileHandler(_TTS_LOG_PATH, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8")
+        fmt = logging.Formatter(
+            fmt="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        fh.setFormatter(fmt)
+        fh.setLevel(logging.DEBUG)
+        tl.addHandler(fh)
+    except Exception:
+        pass
+    tl.propagate = False
+    return tl
+
+tts_logger = _setup_tts_logger()
 class State(Enum):
     RUNNING=0
     PAUSE=1
@@ -620,6 +656,7 @@ class DoubaoTTS(BaseTTS):
 
         print(f"opt: {opt}")
         logger.info(f"opt: {opt}")
+        tts_logger.info("[DoubaoTTS] 初始化 opt=%s", opt)
         
         # 从动态配置中读取豆包TTS参数
         self.appid = get_config('DOUBAO_APPID', "")
@@ -628,6 +665,7 @@ class DoubaoTTS(BaseTTS):
         # 打印日志参数
         print(f"豆包TTS参数: appid={self.appid}, token={self.token}")
         logger.info(f"豆包TTS参数: appid={self.appid}, token={self.token}")
+        tts_logger.info("[DoubaoTTS] 参数: appid=%s, token_mask=%s...%s", self.appid, (self.token or '')[:6], (self.token or '')[-6:])
         
         # 从动态配置中读取音频参数
         self.speed_ratio = get_nested_config('doubao_audio.speed_ratio', 0.8)
@@ -635,10 +673,12 @@ class DoubaoTTS(BaseTTS):
         self.pitch_ratio = get_nested_config('doubao_audio.pitch_ratio', 1.0)
         # 打印日志参数
         logger.info(f"豆包TTS参数: speed_ratio={self.speed_ratio}, volume_ratio={self.volume_ratio}, pitch_ratio={self.pitch_ratio}")
+        tts_logger.info("[DoubaoTTS] 音频参数: speed=%.3f volume=%.3f pitch=%.3f", self.speed_ratio, self.volume_ratio, self.pitch_ratio)
 
         _cluster = 'volcano_tts'
         _host = "openspeech.bytedance.com"
         self.api_url = f"wss://{_host}/api/v1/tts/ws_binary"
+        tts_logger.info("[DoubaoTTS] API: %s", self.api_url)
         
         self.request_json = {
             "app": {
@@ -675,6 +715,7 @@ class DoubaoTTS(BaseTTS):
         logger.info(f"APPID: {self.appid}")
         logger.info(f"TOKEN: {self.token[:10]}...{self.token[-10:] if len(self.token) > 20 else self.token}")
         logger.info(f"API URL: {self.api_url}")
+        tts_logger.info("[DoubaoTTS] 开始，voice_type=%s text_len=%d", voice_type, len(text or ''))
 
         try:
             # 创建请求对象
@@ -682,32 +723,105 @@ class DoubaoTTS(BaseTTS):
             submit_request_json = copy.deepcopy(self.request_json)
             submit_request_json["user"]["uid"] = self.parent.sessionid
             submit_request_json["audio"]["voice_type"] = voice_type
-            submit_request_json["request"]["text"] = text
+            # 每次请求前读取最新的音频参数，确保热更新立即生效
+            try:
+                latest_speed = get_nested_config('doubao_audio.speed_ratio', self.speed_ratio)
+                latest_volume = get_nested_config('doubao_audio.volume_ratio', self.volume_ratio)
+                latest_pitch = get_nested_config('doubao_audio.pitch_ratio', self.pitch_ratio)
+                submit_request_json["audio"]["speed_ratio"] = latest_speed
+                submit_request_json["audio"]["volume_ratio"] = latest_volume
+                submit_request_json["audio"]["pitch_ratio"] = latest_pitch
+                # 同步更新到实例字段（可选）
+                self.speed_ratio = latest_speed
+                self.volume_ratio = latest_volume
+                self.pitch_ratio = latest_pitch
+                logger.info(f"已应用最新TTS音频参数: speed={latest_speed}, volume={latest_volume}, pitch={latest_pitch}")
+                tts_logger.info("[DoubaoTTS] 应用最新音频参数: speed=%.3f volume=%.3f pitch=%.3f", latest_speed, latest_volume, latest_pitch)
+            except Exception as _e:
+                logger.warning(f"应用最新音频参数失败，继续使用旧参数: {_e}")
+                tts_logger.warning("[DoubaoTTS] 应用最新音频参数失败: %s", _e)
+            # 发送前对文本做严格清洗与规范化，避免服务端返回 illegal input text
+            def _sanitize_text_for_doubao(raw: str) -> str:
+                import re
+                import unicodedata
+                if raw is None:
+                    return ""
+                t = str(raw)
+                # Unicode 规范化（兼容全角/半角等）
+                t = unicodedata.normalize('NFKC', t)
+                # 去除零宽/不可见字符与 BOM/控制符
+                t = re.sub(r"[\u200b-\u200f\ufeff\u202a-\u202e]", "", t)
+                t = ''.join(ch for ch in t if ch == '\n' or (ch >= ' ' and ch != '\x7f'))
+                # 允许的字符范围：中英文、数字、常用中英文标点和括号等
+                allowed = r"[^\u4e00-\u9fffA-Za-z0-9\s，。、；：！？,.!?\"'“”‘’（）()【】\[\]《》—…·\-:_]+"
+                t = re.sub(allowed, "", t)
+                # 统一多空白
+                t = re.sub(r"\s+", " ", t).strip()
+                # 长度保护（避免过长导致拒绝），可按需调整
+                if len(t) > 500:
+                    t = t[:500]
+                return t
+
+            _orig_text = text
+            _clean_text = _sanitize_text_for_doubao(_orig_text)
+            if _clean_text != _orig_text:
+                tts_logger.info("[DoubaoTTS] 文本已清洗: 原len=%d 新len=%d 原预览='%s' 新预览='%s'",
+                                len(_orig_text or ""), len(_clean_text), str(_orig_text or "")[:100], _clean_text[:100])
+            # 若清洗后为空，则直接结束此次 TTS（不再兜底“好的。”，避免你反馈的“老是拼一个好的”）
+            if not _clean_text:
+                tts_logger.warning("[DoubaoTTS] 文本清洗后为空，本次不发送TTS请求")
+                return
+
+            submit_request_json["request"]["text"] = _clean_text
             submit_request_json["request"]["reqid"] = str(uuid.uuid4())
             submit_request_json["request"]["operation"] = "submit"
 
             logger.info(f"请求JSON: {json.dumps(submit_request_json, ensure_ascii=False, indent=2)}")
+            tts_logger.debug("[DoubaoTTS] 请求JSON: %s", json.dumps(submit_request_json, ensure_ascii=False)[:1000])
+            # 明确打印即将发送的文本（来自 request.text）
+            _send_text = submit_request_json["request"].get("text", "")
+            logger.info(f"发送文本长度: {len(_send_text)} 内容预览='{_send_text[:200]}'")
+            tts_logger.info("[DoubaoTTS] 发送文本 len=%d 预览='%s'", len(_send_text), _send_text[:200])
 
             payload_bytes = str.encode(json.dumps(submit_request_json))
             logger.info(f"原始payload大小: {len(payload_bytes)} bytes")
+            tts_logger.info("[DoubaoTTS] 原始payload大小=%d bytes", len(payload_bytes))
 
             payload_bytes = gzip.compress(payload_bytes)  # if no compression, comment this line
             logger.info(f"压缩后payload大小: {len(payload_bytes)} bytes")
+            tts_logger.info("[DoubaoTTS] 压缩后payload大小=%d bytes", len(payload_bytes))
 
             full_client_request = bytearray(default_header)
             full_client_request.extend((len(payload_bytes)).to_bytes(4, 'big'))  # payload size(4 bytes)
             full_client_request.extend(payload_bytes)  # payload
 
             logger.info(f"完整请求大小: {len(full_client_request)} bytes")
+            tts_logger.info("[DoubaoTTS] 完整请求大小=%d bytes", len(full_client_request))
+            # 从将要发送的payload中预览文本（尝试解压+UTF-8 解码）
+            try:
+                _payload_preview = None
+                try:
+                    _decompressed = gzip.decompress(payload_bytes)
+                    _payload_preview = _decompressed.decode('utf-8', errors='replace')
+                    tts_logger.debug("[DoubaoTTS] 发送payload 解压后len=%d 文本预览='%s'", len(_payload_preview), _payload_preview[:400])
+                except Exception:
+                    _payload_preview = payload_bytes.decode('utf-8', errors='replace')
+                    tts_logger.debug("[DoubaoTTS] 发送payload 直解len=%d 文本预览='%s'", len(_payload_preview), _payload_preview[:400])
+            except Exception as _e:
+                tts_logger.warning("[DoubaoTTS] payload文本预览失败: %s", _e)
 
             header = {"Authorization": f"Bearer; {self.token}"}
             logger.info(f"请求头: {header}")
+            tts_logger.debug("[DoubaoTTS] 请求头: %s", header)
 
             first = True
             chunk_count = 0
             total_audio_size = 0
+            # 记录最近一次收到音频的时间，用于无音频超时保护
+            last_audio_time = time.perf_counter()
 
             logger.info("开始连接WebSocket...")
+            tts_logger.info("[DoubaoTTS] 连接WebSocket: %s", self.api_url)
             try:
                 # 优先使用旧版参数名 extra_headers，若不支持则回退到新版 additional_headers
                 ws_connect = websockets.connect(self.api_url, extra_headers=header, ping_interval=None)
@@ -716,12 +830,15 @@ class DoubaoTTS(BaseTTS):
                 ws_connect = websockets.connect(self.api_url, additional_headers=header, ping_interval=None)
             async with ws_connect as ws:
                 logger.info("WebSocket连接成功，发送请求...")
+                tts_logger.info("[DoubaoTTS] WebSocket连接成功，发送请求")
                 await ws.send(full_client_request)
                 logger.info("请求已发送，等待响应...")
+                tts_logger.info("[DoubaoTTS] 请求已发送，等待响应")
 
                 while True:
                     res = await ws.recv()
                     logger.info(f"收到响应，大小: {len(res)} bytes")
+                    tts_logger.debug("[DoubaoTTS] 收到WS帧 bytes=%d", len(res))
 
                     header_size = res[0] & 0x0f
                     message_type = res[1] >> 4
@@ -729,15 +846,18 @@ class DoubaoTTS(BaseTTS):
                     payload = res[header_size*4:]
 
                     logger.info(f"消息类型: 0x{message_type:x}, 标志: 0x{message_type_specific_flags:x}, 头部大小: {header_size}, payload大小: {len(payload)}")
+                    tts_logger.debug("[DoubaoTTS] type=0x%x flags=0x%x header_size=%d payload=%d", message_type, message_type_specific_flags, header_size, len(payload))
 
                     if message_type == 0xb:  # audio-only server response
                         if message_type_specific_flags == 0:  # no sequence number as ACK
                             logger.info("收到ACK响应，payload大小为0")
+                            tts_logger.info("[DoubaoTTS] 收到ACK，payload=0")
                             continue
                         else:
                             if first:
                                 end = time.perf_counter()
                                 logger.info(f"doubao tts Time to first chunk: {end-start}s")
+                                tts_logger.info("[DoubaoTTS] 首包耗时=%.3fs", end - start)
                                 first = False
                             sequence_number = int.from_bytes(payload[:4], "big", signed=True)
                             payload_size = int.from_bytes(payload[4:8], "big", signed=False)
@@ -746,17 +866,82 @@ class DoubaoTTS(BaseTTS):
                             chunk_count += 1
                             total_audio_size += len(audio_payload)
                             logger.info(f"音频块 #{chunk_count}: 序列号={sequence_number}, 声明大小={payload_size}, 实际大小={len(audio_payload)}")
+                            tts_logger.info("[DoubaoTTS] 音频块#%d seq=%d decl=%d real=%d", chunk_count, sequence_number, payload_size, len(audio_payload))
+                            # 更新最近音频时间
+                            last_audio_time = time.perf_counter()
 
                             yield audio_payload
 
                         if sequence_number < 0:
                             logger.info(f"收到结束信号，序列号: {sequence_number}")
+                            tts_logger.info("[DoubaoTTS] 收到结束信号 seq=%d", sequence_number)
                             break
                     else:
                         logger.warning(f"收到非音频消息类型: 0x{message_type:x}")
                         # 根据消息类型进行不同处理
                         if message_type == 0xf:  # 可能是控制消息或状态消息
+                            # 增强对控制/状态payload的可观测性
+                            try:
+                                preview = payload[:120]
+                                hex_preview = preview.hex() if len(preview) > 0 else "空"
+                                tts_logger.debug("[DoubaoTTS] 控制/状态payload原始前120字节(hex)=%s", hex_preview)
+                                text = None
+                                if len(payload) > 0:
+                                    # 控制消息也可能遵循同样的 4字节保留 + 4字节长度 + 压缩内容 的结构
+                                    try:
+                                        inner = payload
+                                        if len(payload) >= 8:
+                                            inner_size = int.from_bytes(payload[4:8], 'big', signed=False)
+                                            inner = payload[8:8+inner_size]
+                                        # 优先尝试解压
+                                        try:
+                                            decompressed = gzip.decompress(inner)
+                                            text = decompressed.decode("utf-8", errors="replace")
+                                            tts_logger.debug("[DoubaoTTS] 控制/状态payload(解包后) 解压len=%d 预览='%s'", len(text), text[:200])
+                                        except Exception:
+                                            text = inner.decode("utf-8", errors="replace")
+                                            tts_logger.debug("[DoubaoTTS] 控制/状态payload(解包后) 直解len=%d 预览='%s'", len(text), text[:200])
+                                    except Exception as _inner_e:
+                                        # 退化为直接尝试原始payload
+                                        try:
+                                            decompressed = gzip.decompress(payload)
+                                            text = decompressed.decode("utf-8", errors="replace")
+                                            tts_logger.debug("[DoubaoTTS] 控制/状态payload 解压后len=%d 预览='%s'", len(text), text[:200])
+                                        except Exception:
+                                            text = payload.decode("utf-8", errors="replace")
+                                            tts_logger.debug("[DoubaoTTS] 控制/状态payload 直解len=%d 预览='%s'", len(text), text[:200])
+                                    # 尝试JSON解析，提取常见字段（使用模块级json，避免局部遮蔽）
+                                    try:
+                                        obj = json.loads(text)
+                                        code = obj.get("code") or obj.get("status_code") or obj.get("err_no")
+                                        status = obj.get("status") or obj.get("message") or obj.get("err_msg") or obj.get("task_status")
+                                        err_msg = obj.get("error") or obj.get("msg")
+                                        tts_logger.info("[DoubaoTTS] 控制/状态: code=%s status=%s error=%s keys=%s", str(code), str(status), str(err_msg), list(obj.keys()))
+                                        # 发现明确错误字段则直接结束，避免挂起
+                                        if err_msg:
+                                            tts_logger.warning("[DoubaoTTS] 服务端错误: %s，结束会话", err_msg)
+                                            break
+                                        # 若明显是结束/拒绝/错误状态，结束本次会话，避免挂起
+                                        status_l = str(status).lower() if status is not None else ""
+                                        if status_l in ("end", "ended", "finish", "finished", "stopped") or \
+                                           str(code) not in ("0", "None"):
+                                            tts_logger.warning("[DoubaoTTS] 控制消息指示结束或错误，主动结束会话: code=%s status=%s", str(code), str(status))
+                                            break
+                                    except Exception:
+                                        pass
+                                else:
+                                    tts_logger.info("[DoubaoTTS] 控制/状态消息：空payload")
+                            except Exception as e:
+                                tts_logger.exception("[DoubaoTTS] 控制/状态payload解析异常: %s", e)
+                            # 无音频超时保护：若长时间未收到音频块，则结束本次会话，交由上层重试
+                            now = time.perf_counter()
+                            no_audio_secs = now - last_audio_time
+                            if no_audio_secs > 5.0 and chunk_count == 0:
+                                logger.warning(f"控制/状态持续且无音频超过 {no_audio_secs:.2f}s，结束本次会话")
+                                tts_logger.warning("[DoubaoTTS] 控制/状态无音频超时(>5s)，结束会话")
+                                break
                             logger.info("收到控制/状态消息，继续等待音频数据")
+                            tts_logger.info("[DoubaoTTS] 控制/状态消息，继续")
                             continue
                         elif message_type == 0xc:  # 可能是错误消息
                             try:
@@ -767,18 +952,22 @@ class DoubaoTTS(BaseTTS):
                                         decompressed = gzip.decompress(payload)
                                         error_msg = decompressed.decode('utf-8')
                                         logger.error(f"服务器错误信息(解压后): {error_msg}")
+                                        tts_logger.error("[DoubaoTTS] 错误(解压后): %s", error_msg)
                                     except:
                                         # 直接解析
                                         error_msg = payload.decode('utf-8')
                                         logger.error(f"服务器错误信息: {error_msg}")
+                                        tts_logger.error("[DoubaoTTS] 错误: %s", error_msg)
                                 else:
                                     logger.warning("收到空的错误消息payload")
+                                    tts_logger.warning("[DoubaoTTS] 空错误payload")
                             except Exception as decode_error:
                                 logger.error(f"无法解析错误信息，解码异常: {str(decode_error)}")
                                 logger.error(f"原始数据前100字节: {payload[:100]}")
                                 # 尝试以十六进制显示
                                 hex_data = payload[:50].hex() if len(payload) > 0 else "空数据"
                                 logger.error(f"十六进制数据: {hex_data}")
+                                tts_logger.exception("[DoubaoTTS] 错误解析异常: %s", decode_error)
                             break
                         else:
                             # 其他未知消息类型，记录并继续
@@ -786,13 +975,16 @@ class DoubaoTTS(BaseTTS):
                             if len(payload) > 0:
                                 hex_preview = payload[:20].hex() if len(payload) >= 20 else payload.hex()
                                 logger.debug(f"payload预览(hex): {hex_preview}")
+                                tts_logger.debug("[DoubaoTTS] 未知类型 payload_hex=%s", hex_preview)
                             continue
             logger.info(f"=== 豆包TTS完成 ===")
             logger.info(f"总共收到 {chunk_count} 个音频块，总大小: {total_audio_size} bytes")
+            tts_logger.info("[DoubaoTTS] 完成，块数=%d 总字节=%d", chunk_count, total_audio_size)
 
         except Exception as e:
             logger.error(f"豆包TTS异常: {str(e)}")
             logger.exception('doubao详细异常信息')
+            tts_logger.exception("[DoubaoTTS] 异常: %s", e)
         # # 检查响应状态码
         # if response.status_code == 200:
         #     # 处理响应数据
@@ -806,6 +998,7 @@ class DoubaoTTS(BaseTTS):
         text, textevent = msg
         logger.info(f"=== DoubaoTTS.txt_to_audio 开始 ===")
         logger.info(f"输入消息: text='{text}', textevent={textevent}")
+        tts_logger.info("[DoubaoTTS] txt_to_audio 开始 text_len=%d", len(text or ''))
 
         try:
             asyncio.new_event_loop().run_until_complete(
@@ -815,15 +1008,18 @@ class DoubaoTTS(BaseTTS):
                 )
             )
             logger.info("=== DoubaoTTS.txt_to_audio 完成 ===")
+            tts_logger.info("[DoubaoTTS] txt_to_audio 完成")
         except Exception as e:
             logger.error(f"DoubaoTTS.txt_to_audio 异常: {str(e)}")
             logger.exception("详细异常信息")
+            tts_logger.exception("[DoubaoTTS] txt_to_audio 异常: %s", e)
 
     async def stream_tts(self, audio_stream, msg):
         text, textevent = msg
         logger.info(f"=== 开始音频流处理 ===")
         logger.info(f"处理文本: {text}")
         logger.info(f"chunk大小: {self.chunk}")
+        tts_logger.info("[DoubaoTTS] 流式开始 chunk=%d", self.chunk)
 
         first = True
         last_stream = np.array([],dtype=np.float32)
@@ -833,14 +1029,17 @@ class DoubaoTTS(BaseTTS):
         async for chunk in audio_stream:
             chunk_count += 1
             logger.info(f"收到音频块 #{chunk_count}, 大小: {len(chunk) if chunk else 0} bytes")
+            tts_logger.debug("[DoubaoTTS] 收到音频块#%d bytes=%d", chunk_count, len(chunk) if chunk else 0)
 
             if chunk is not None and len(chunk) > 0:
                 # 将字节数据转换为音频流
                 stream = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32767
                 logger.info(f"转换后音频流长度: {len(stream)} samples")
+                tts_logger.debug("[DoubaoTTS] 转换流 samples=%d", len(stream))
 
                 stream = np.concatenate((last_stream,stream))
                 logger.info(f"合并后音频流长度: {len(stream)} samples")
+                tts_logger.debug("[DoubaoTTS] 合并后 samples=%d", len(stream))
 
                 #stream = resampy.resample(x=stream, sr_orig=24000, sr_new=self.sample_rate)
                 # byte_stream=BytesIO(buffer)
@@ -854,6 +1053,7 @@ class DoubaoTTS(BaseTTS):
                     if first:
                         eventpoint = {'status': 'start', 'text': text, 'msgenvent': textevent}
                         logger.info("发送音频开始事件")
+                        tts_logger.info("[DoubaoTTS] 发送开始事件 text_len=%d", len(text or ''))
                         first = False
 
                     self.parent.put_audio_frame(stream[idx:idx + self.chunk], eventpoint)
@@ -863,15 +1063,19 @@ class DoubaoTTS(BaseTTS):
                     idx += self.chunk
 
                 logger.info(f"本块处理了 {frames_in_chunk} 个音频帧")
+                tts_logger.debug("[DoubaoTTS] 本块帧数=%d", frames_in_chunk)
                 last_stream = stream[idx:] #get the remain stream
                 logger.info(f"剩余音频流长度: {len(last_stream)} samples")
+                tts_logger.debug("[DoubaoTTS] 残留 samples=%d", len(last_stream))
             else:
                 logger.warning(f"收到空音频块 #{chunk_count}")
+                tts_logger.warning("[DoubaoTTS] 空音频块#%d", chunk_count)
 
         logger.info(f"=== 音频流处理完成 ===")
         logger.info(f"总共处理 {chunk_count} 个音频块")
         logger.info(f"总共输出 {total_audio_frames} 个音频帧")
         logger.info("发送音频结束事件")
+        tts_logger.info("[DoubaoTTS] 流式结束 块=%d 帧=%d", chunk_count, total_audio_frames)
 
         eventpoint = {'status': 'end', 'text': text, 'msgenvent': textevent}
         self.parent.put_audio_frame(np.zeros(self.chunk, np.float32), eventpoint)
