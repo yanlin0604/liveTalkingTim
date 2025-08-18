@@ -310,6 +310,16 @@ if __name__ == '__main__':
     
     logger.info("动态配置系统已启动")
 
+    # 根据传输模式自动设置默认 push_url，防止遗漏参数
+    try:
+        default_push = parser.get_default('push_url') if 'parser' in locals() else 'http://localhost:1985/rtc/v1/whip/?app=live&stream=livestream'
+        if opt.transport == 'rtmp':
+            if opt.push_url == default_push or str(opt.push_url).startswith(('http://', 'https://')):
+                opt.push_url = 'rtmp://localhost/live/livestream'
+                logger.info(f"RTMP 模式未指定推流地址，已设置默认: {opt.push_url}")
+    except Exception as e:
+        logger.warning(f"自动设置 push_url 失败: {e}")
+
 
     # 配置验证和建议
     if opt.transport == 'webrtc' and opt.batch_size > 12:
@@ -385,11 +395,13 @@ if __name__ == '__main__':
         logger.info(opt)
         model = load_model(opt)
 
-    # if opt.transport=='rtmp':
-    #     thread_quit = Event()
-    #     nerfreals[0] = build_nerfreal(0)
-    #     rendthrd = Thread(target=nerfreals[0].render,args=(thread_quit,))
-    #     rendthrd.start()
+    if opt.transport=='rtmp':
+        thread_quit = Event()
+        nerfreal = build_nerfreal(0)
+        safe_set_nerfreal(0, nerfreal)
+        rendthrd = Thread(target=nerfreal.render, args=(thread_quit,))
+        rendthrd.start()
+        logger.info(f"RTMP 推流线程已启动，目标: {opt.push_url}")
     if opt.transport=='virtualcam':
         thread_quit = Event()
         nerfreal = build_nerfreal(0)

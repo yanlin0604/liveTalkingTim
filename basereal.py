@@ -34,6 +34,7 @@ import soundfile as sf
 
 import asyncio
 from av import AudioFrame, VideoFrame
+from av.audio.resampler import AudioResampler
 
 import av
 from fractions import Fraction
@@ -577,6 +578,15 @@ class BaseReal:
             audio_tmp = queue.Queue(maxsize=3000)
             audio_thread = Thread(target=play_audio, args=(quit_event,audio_tmp,), daemon=True, name="pyaudio_stream")
             audio_thread.start()
+        elif self.opt.transport=='rtmp':
+            # RTMP 推流相关对象延迟初始化（在拿到第一帧视频后再初始化尺寸）
+            rtmp_container = None
+            vstream = None
+            astream = None
+            audio_resampler = None
+            rtmp_width = 0
+            rtmp_height = 0
+            video_frame_index = 0
         
         while not quit_event.is_set():
             # 帧率控制 - 使用配置的目标帧率
@@ -697,6 +707,42 @@ class BaseReal:
                     height, width,_= combine_frame.shape
                     vircam = pyvirtualcam.Camera(width=width, height=height, fps=25, fmt=pyvirtualcam.PixelFormat.BGR,print_fps=True)
                 vircam.send(combine_frame)
+            elif self.opt.transport=='rtmp':
+                # 懒加载初始化 RTMP 输出（基于首帧尺寸）
+                if rtmp_container is None:
+                    height, width, _ = combine_frame.shape
+                    rtmp_width, rtmp_height = width, height
+                    try:
+                        # 以 FLV 格式打开 RTMP 输出
+                        rtmp_container = av.open(self.opt.push_url, mode='w', format='flv')
+                        # 视频流（libx264）
+                        vstream = rtmp_container.add_stream('libx264', rate=int(target_fps))
+                        vstream.width = rtmp_width
+                        vstream.height = rtmp_height
+                        vstream.pix_fmt = 'yuv420p'
+                        vstream.bit_rate = 2_000_000  # ~2Mbps
+                        vstream.gop_size = int(target_fps * 2)  # 关键帧间隔
+                        # 音频流（AAC），统一转为44.1kHz立体声，兼容性更好
+                        astream = rtmp_container.add_stream('aac', rate=44100)
+                        astream.layout = 'stereo'
+                        astream.channels = 2
+                        audio_resampler = AudioResampler(format='s16', layout='stereo', rate=44100)
+                        logger.info(f"RTMP 推流初始化成功 -> {self.opt.push_url} ({rtmp_width}x{rtmp_height}@{int(target_fps)}fps)")
+                    except Exception as e:
+                        logger.error(f"RTMP 推流初始化失败: {e}")
+                        # 出错则跳过本帧，避免阻塞
+                        continue
+
+                # 编码并推送视频帧
+                try:
+                    vframe = VideoFrame.from_ndarray(combine_frame, format="bgr24").reformat(width=rtmp_width, height=rtmp_height, format='yuv420p')
+                    vframe.pts = video_frame_index
+                    vframe.time_base = Fraction(1, int(target_fps))
+                    video_frame_index += 1
+                    for packet in vstream.encode(vframe):
+                        rtmp_container.mux(packet)
+                except Exception as e:
+                    logger.warning(f"RTMP 视频编码/推送异常: {e}")
             else: #webrtc
                 # 实时推流优化：确保图像质量和传输稳定性
                 image = combine_frame
@@ -732,6 +778,21 @@ class BaseReal:
 
                 if self.opt.transport=='virtualcam':
                     audio_tmp.put(frame.tobytes()) #TODO
+                elif self.opt.transport=='rtmp':
+                    # 将16kHz单声道PCM重采样至44.1kHz立体声并编码推送
+                    if 'rtmp_container' in locals() and rtmp_container is not None and astream is not None and audio_resampler is not None:
+                        try:
+                            new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
+                            new_frame.planes[0].update(frame.tobytes())
+                            new_frame.sample_rate = 16000
+                            for rframe in audio_resampler.resample(new_frame):
+                                for packet in astream.encode(rframe):
+                                    rtmp_container.mux(packet)
+                        except Exception as e:
+                            logger.warning(f"RTMP 音频编码/推送异常: {e}")
+                    else:
+                        # 若容器尚未初始化（通常等待首个视频帧），则跳过音频
+                        pass
                 else: #webrtc
                     new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
                     new_frame.planes[0].update(frame.tobytes())
@@ -759,6 +820,19 @@ class BaseReal:
         if self.opt.transport=='virtualcam':
             audio_thread.join()
             vircam.close()
+        if self.opt.transport=='rtmp':
+            # 刷新缓冲并关闭容器
+            try:
+                if 'vstream' in locals() and vstream is not None and 'rtmp_container' in locals() and rtmp_container is not None:
+                    for packet in vstream.encode(None):
+                        rtmp_container.mux(packet)
+                if 'astream' in locals() and astream is not None and 'rtmp_container' in locals() and rtmp_container is not None:
+                    for packet in astream.encode(None):
+                        rtmp_container.mux(packet)
+                if 'rtmp_container' in locals() and rtmp_container is not None:
+                    rtmp_container.close()
+            except Exception as e:
+                logger.warning(f"RTMP 结束时清理异常: {e}")
         
         # 优雅停止：清理资源并记录日志
         logger.info('basereal process_frames thread stop - 优雅清理完成')
