@@ -82,10 +82,11 @@ def llm_response(message, nerfreal: BaseReal):
 def _dashscope_response(message, nerfreal: BaseReal, start_time):
     """阿里云DashScope响应处理"""
     from openai import OpenAI
-
+    llm_api_key = getattr(nerfreal.opt, 'llm_api_key', '')
+    llm_logger.info("使用DashScope API Key: %s", llm_api_key)
     client = OpenAI(
         # 如果您没有配置环境变量，请在此处用您的API Key进行替换
-        api_key="sk-2cead3807c5b469db22b351c63351792",  # os.getenv("DASHSCOPE_API_KEY"),
+        api_key= llm_api_key,
         # 填写DashScope SDK的base_url
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
@@ -93,7 +94,7 @@ def _dashscope_response(message, nerfreal: BaseReal, start_time):
     logger.info(f"llm Time init (dashscope): {end-start_time}s")
     llm_logger.debug("dashscope 初始化耗时=%.3fs", end - start_time)
 
-    model = "qwen-plus"  # getattr(nerfreal.opt, 'llm_model', 'qwen-plus')
+    model = getattr(nerfreal.opt, 'llm_model', 'qwen-plus')
     system_prompt = getattr(
         nerfreal.opt, "llm_system_prompt", "你是一位乐于助人的助手。"
     )
