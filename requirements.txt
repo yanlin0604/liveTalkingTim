@@ -49,3 +49,8 @@ aiohttp-swagger    # 备选：支持Swagger 2.0，更稳定
 
 # RTMP 推流所需编码/封装库
 av
+
+# WebSocket/RSocket 与异步HTTP
+aiohttp
+rsocket
+reactivestreams

@@ -1,3 +1,109 @@
+import asyncio
+import os
+import sys
+import time
+from typing import Dict, Optional
+from logger import logger
+
+class BarrageManager:
+    """管理 barrage_websocket.py 子进程，仅通过进程句柄控制。
+
+    /barrage/start 仅需 sessionid：在启动前写入 config/barrage_config.json 的 default_sessionid。
+    不依赖子进程管理HTTP端口。
+    """
+    def __init__(self):
+        self.process: Optional[asyncio.subprocess.Process] = None
+        self.started_at: float = 0.0
+        self.args: Dict[str, str] = {}
+        self.config_path: str = 'config/barrage_config.json'
+        self._original_default_sessionid = None
+
+    def is_running(self) -> bool:
+        return self.process is not None and self.process.returncode is None
+
+    async def start(self, sessionid: int) -> Dict:
+        if self.is_running():
+            return {"ok": False, "error": "Barrage service already running"}
+
+        # 1) 写入配置的 default_sessionid
+        try:
+            import json
+            cfg_path = self.config_path
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            self._original_default_sessionid = cfg.get('default_sessionid')
+            cfg['default_sessionid'] = int(sessionid)
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            logger.info(f"已将 {cfg_path} 的 default_sessionid 设置为 {sessionid}")
+        except Exception as e:
+            return {"ok": False, "error": f"更新配置失败: {e}"}
+
+        # 2) 启动子进程（不传额外CLI参数，沿用脚本默认）
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'barrage_websocket.py')
+        cmd = [sys.executable, script_path]
+        logger.info(f"启动 barrage_websocket: {' '.join(cmd)}")
+        try:
+            self.process = await asyncio.create_subprocess_exec(*cmd)
+        except Exception as e:
+            # 失败时尝试回滚配置
+            try:
+                import json
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                cfg['default_sessionid'] = self._original_default_sessionid
+                with open(self.config_path, 'w', encoding='utf-8') as f:
+                    json.dump(cfg, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+            return {"ok": False, "error": f"启动子进程失败: {e}"}
+
+        self.started_at = time.time()
+        self.args = {'sessionid': int(sessionid)}
+        return {"ok": True, "pid": self.process.pid}
+
+    async def status(self) -> Dict:
+        info = {
+            'running': self.is_running(),
+            'pid': getattr(self.process, 'pid', None),
+            'started_at': self.started_at,
+            'args': self.args,
+        }
+        return info
+
+    async def stop(self) -> Dict:
+        if not self.is_running():
+            return {"ok": True, "message": "not running"}
+        # 直接结束子进程
+        try:
+            self.process.terminate()
+        except Exception:
+            pass
+        # 等待退出
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=5)
+        except Exception:
+            logger.warning("子进程未按时退出，尝试kill")
+            try:
+                self.process.kill()
+            except Exception:
+                pass
+        ret = self.process.returncode
+        self.process = None
+        # 尝试恢复配置
+        try:
+            import json
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            if self._original_default_sessionid is not None:
+                cfg['default_sessionid'] = self._original_default_sessionid
+                with open(self.config_path, 'w', encoding='utf-8') as f:
+                    json.dump(cfg, f, ensure_ascii=False, indent=2)
+                logger.info("已恢复 default_sessionid 到原值")
+        except Exception as e:
+            logger.warning(f"恢复配置失败: {e}")
+        return {"ok": True, "returncode": ret}
+
 ###############################################################################
 #  Copyright (C) 2025 unimed
 #  email: zengyanlin99@gmail.com
@@ -33,6 +139,7 @@ import threading
 import argparse
 
 from aiohttp import web
+import aiohttp
 import aiohttp_cors
 
 # 添加当前目录到Python路径
@@ -247,6 +354,7 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     tts_api = TTSAPI()
     service_api = ServiceAPI()
     audio_api = AudioAPI()
+    barrage_manager = BarrageManager()
     
     # 头像管理接口
     app.router.add_get("/get_avatars", avatars_api.get_avatars)  # 获取可用头像列表
@@ -277,6 +385,37 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     app.router.add_get("/get_status", service_api.get_status)  # 查询主数字人服务状态接口
     app.router.add_post("/start_service", service_api.start_service)  # 启动主数字人服务接口
     app.router.add_post("/stop_service", service_api.stop_service)  # 停止主数字人服务接口
+    
+    # 弹幕转发服务管理接口（基于 barrage_websocket.py）
+    def api_ok(data: dict | None = None):
+        from aiohttp import web
+        return web.json_response({"code": 0, "msg": "ok", "data": data or {}})
+
+    def api_err(message: str, code: int = 1):
+        from aiohttp import web
+        return web.json_response({"code": code, "msg": message, "data": {}})
+
+    async def start_barrage(request: web.Request):
+        data = await request.json()
+        sessionid = int(data.get('sessionid'))
+        result = await barrage_manager.start(sessionid)
+        if not result.get('ok'):
+            return api_err(result.get('error', 'start failed'))
+        return api_ok(result)
+
+    async def status_barrage(request: web.Request):
+        result = await barrage_manager.status()
+        return api_ok(result)
+
+    async def stop_barrage(request: web.Request):
+        result = await barrage_manager.stop()
+        if not result.get('ok'):
+            return api_err(result.get('error', 'stop failed'))
+        return api_ok(result)
+
+    app.router.add_post('/barrage/start', start_barrage)
+    app.router.add_get('/barrage/status', status_barrage)
+    app.router.add_post('/barrage/stop', stop_barrage)
     
     # 音频管理接口
     app.router.add_post("/audio/upload", audio_api.upload_file)         # 上传本地音频文件

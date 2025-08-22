@@ -1,0 +1,59 @@
+{
+  "human_url": "http://127.0.0.1:8010/human",
+  "default_sessionid": 681008,
+  "types": {
+    "DANMU": {
+      "enabled": true,
+      "action": "chat",
+      "template": "{username}说：{content}",
+      "interrupt": false,
+      "min_length": 1,
+      "max_length": 120
+    },
+    "GIFT": {
+      "enabled": true,
+      "action": "echo",
+      "template": "感谢{username}送出的{giftName}x{giftCount}！",
+      "interrupt": false,
+      "min_gift_price": 0
+    },
+    "SUPER_CHAT": {
+      "enabled": true,
+      "action": "echo",
+      "template": "感谢醒目留言，{username}：{content}",
+      "interrupt": true,
+      "min_price": 0
+    },
+    "ENTER_ROOM": {
+      "enabled": false,
+      "action": "echo",
+      "template": "欢迎{username}进入直播间",
+      "interrupt": false
+    },
+    "LIKE": {
+      "enabled": false,
+      "action": "echo",
+      "template": "{username} 点赞了直播",
+      "interrupt": false
+    },
+    "LIVE_STATUS_CHANGE": {
+      "enabled": true,
+      "action": "echo",
+      "template": "直播状态变更：{status}",
+      "interrupt": true
+    },
+    "ROOM_STATS": {
+      "enabled": false,
+      "action": "echo",
+      "template": "当前在线{online}，热度{hot}，点赞{likes}",
+      "interrupt": false
+    },
+    "SOCIAL": {
+      "enabled": false,
+      "action": "echo",
+      "template": "{username}{action}",
+      "interrupt": false
+    }
+  },
+  "sessions": {}
+}
