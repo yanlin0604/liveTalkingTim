@@ -1,0 +1,32 @@
+{
+  "_comment": "弹幕全局规则配置文件 - 控制消息的长度和频率限制",
+  
+  "global": {
+    "_comment": "全局消息规则，适用于所有类型的消息",
+    "min_len": 1,
+    "_min_len_comment": "消息最小长度，小于此长度的消息会被过滤",
+    "max_len": 120,
+    "_max_len_comment": "消息最大长度，超过此长度的消息会被截断",
+    "rate_limit_per_min": 60,
+    "_rate_limit_per_min_comment": "每分钟最大处理消息数量，防止消息过多导致刷屏",
+    "interrupt": false,
+    "_interrupt_comment": "全局是否允许打断当前播放内容"
+  },
+  
+  "types": {
+    "_comment": "各消息类型的特定规则覆盖",
+    "DANMU": { 
+      "enabled": true, 
+      "interrupt": false,
+      "_comment": "弹幕消息规则：启用但不打断"
+    },
+    "GIFT": { 
+      "enabled": true,
+      "_comment": "礼物消息规则：启用处理"
+    },
+    "SUPER_CHAT": { 
+      "enabled": true,
+      "_comment": "醒目留言规则：启用处理"
+    }
+  }
+}

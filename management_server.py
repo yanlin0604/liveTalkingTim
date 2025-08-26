@@ -417,6 +417,128 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     app.router.add_get('/barrage/status', status_barrage)
     app.router.add_post('/barrage/stop', stop_barrage)
     
+    # ===== 四类配置 CRUD 接口 =====
+    from pathlib import Path
+    base_conf = Path('config')
+    speech_file = base_conf / 'speech_config.json'
+    sensitive_file = base_conf / 'sensitive_config.json'
+    schedule_file = base_conf / 'schedule_config.json'
+    rules_file = base_conf / 'barrage_rules.json'
+
+    async def read_json_file(p: Path):
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                return True, json.load(f)
+        except Exception as e:
+            return False, str(e)
+
+    async def write_json_file(p: Path, data: dict):
+        try:
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
+    # 话术配置
+    async def get_speech(request: web.Request):
+        ok, res = await read_json_file(speech_file)
+        return api_ok(res) if ok else api_err(f"读取失败: {res}")
+
+    async def put_speech(request: web.Request):
+        try:
+            data = await request.json()
+        except Exception as e:
+            return api_err(f"JSON解析失败: {e}")
+        ok, err = await write_json_file(speech_file, data)
+        return api_ok({"saved": ok}) if ok else api_err(f"保存失败: {err}")
+
+    async def reset_speech(request: web.Request):
+        default = {
+            "templates": {"greeting": ["大家好，我是{avatar}，欢迎来到直播间！"], "fallback": ["这条消息我先跳过，继续看下一条～"]},
+            "reply_rules": [{"match": "上链接", "template": "商品链接已置顶，{username}可以点击查看哦～"}],
+            "gift_thanks": [{"min_price": 1, "template": "感谢{username}送出的{giftName}x{giftCount}！"}]
+        }
+        ok, err = await write_json_file(speech_file, default)
+        return api_ok({"reset": ok}) if ok else api_err(f"重置失败: {err}")
+
+    # 敏感词配置
+    async def get_sensitive(request: web.Request):
+        ok, res = await read_json_file(sensitive_file)
+        return api_ok(res) if ok else api_err(f"读取失败: {res}")
+
+    async def put_sensitive(request: web.Request):
+        try:
+            data = await request.json()
+        except Exception as e:
+            return api_err(f"JSON解析失败: {e}")
+        ok, err = await write_json_file(sensitive_file, data)
+        return api_ok({"saved": ok}) if ok else api_err(f"保存失败: {err}")
+
+    async def reset_sensitive(request: web.Request):
+        default = {"blacklist": ["违禁词1", "违禁词2"], "strategy": "mask", "mask_char": "*"}
+        ok, err = await write_json_file(sensitive_file, default)
+        return api_ok({"reset": ok}) if ok else api_err(f"重置失败: {err}")
+
+    # 定时任务配置
+    async def get_schedule_cfg(request: web.Request):
+        ok, res = await read_json_file(schedule_file)
+        return api_ok(res) if ok else api_err(f"读取失败: {res}")
+
+    async def put_schedule_cfg(request: web.Request):
+        try:
+            data = await request.json()
+        except Exception as e:
+            return api_err(f"JSON解析失败: {e}")
+        ok, err = await write_json_file(schedule_file, data)
+        return api_ok({"saved": ok}) if ok else api_err(f"保存失败: {err}")
+
+    async def reset_schedule_cfg(request: web.Request):
+        default = {
+            "auto_broadcast": {"enabled": True, "interval_sec": 180, "messages": ["关注不迷路，带你看好物～"]},
+            "idle_fill": {"enabled": True, "idle_threshold_sec": 60, "messages": ["有想看的可以在弹幕里告诉我哦～"]}
+        }
+        ok, err = await write_json_file(schedule_file, default)
+        return api_ok({"reset": ok}) if ok else api_err(f"重置失败: {err}")
+
+    # 弹幕处理配置
+    async def get_barrage_rules(request: web.Request):
+        ok, res = await read_json_file(rules_file)
+        return api_ok(res) if ok else api_err(f"读取失败: {res}")
+
+    async def put_barrage_rules(request: web.Request):
+        try:
+            data = await request.json()
+        except Exception as e:
+            return api_err(f"JSON解析失败: {e}")
+        ok, err = await write_json_file(rules_file, data)
+        return api_ok({"saved": ok}) if ok else api_err(f"保存失败: {err}")
+
+    async def reset_barrage_rules(request: web.Request):
+        default = {
+            "global": {"min_len": 1, "max_len": 120, "rate_limit_per_min": 60, "interrupt": False},
+            "types": {"DANMU": {"enabled": True, "interrupt": False}, "GIFT": {"enabled": True}, "SUPER_CHAT": {"enabled": True}}
+        }
+        ok, err = await write_json_file(rules_file, default)
+        return api_ok({"reset": ok}) if ok else api_err(f"重置失败: {err}")
+
+    # 路由注册
+    app.router.add_get('/speech_config', get_speech)
+    app.router.add_put('/speech_config', put_speech)
+    app.router.add_post('/speech_config/reset', reset_speech)
+
+    app.router.add_get('/sensitive_config', get_sensitive)
+    app.router.add_put('/sensitive_config', put_sensitive)
+    app.router.add_post('/sensitive_config/reset', reset_sensitive)
+
+    app.router.add_get('/schedule_config', get_schedule_cfg)
+    app.router.add_put('/schedule_config', put_schedule_cfg)
+    app.router.add_post('/schedule_config/reset', reset_schedule_cfg)
+
+    app.router.add_get('/barrage_rules', get_barrage_rules)
+    app.router.add_put('/barrage_rules', put_barrage_rules)
+    app.router.add_post('/barrage_rules/reset', reset_barrage_rules)
+    
     # 音频管理接口
     app.router.add_post("/audio/upload", audio_api.upload_file)         # 上传本地音频文件
     app.router.add_post("/audio/upload_url", audio_api.upload_url)      # 通过远程URL保存音频

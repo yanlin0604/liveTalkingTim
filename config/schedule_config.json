@@ -1,0 +1,39 @@
+{
+  "_comment": "定时任务配置文件 - 控制自动播报和冷场填充",
+  
+  "auto_broadcast": {
+    "_comment": "自动播报配置 - 定时发送宣传或提醒消息",
+    "enabled": true,
+    "_enabled_comment": "是否启用自动播报功能",
+    "interval_sec": 180,
+    "_interval_sec_comment": "播报间隔时间（秒），180秒=3分钟",
+    "interrupt": false,
+    "_interrupt_comment": "自动播报是否打断当前内容",
+    "msg_type": "auto_broadcast",
+    "_msg_type_comment": "消息类型标识，用于区分不同来源的消息",
+    "messages": [
+      "关注不迷路，带你看好物～",
+      "喜欢的宝贝记得点赞收藏哦～",
+      "有什么想了解的可以在弹幕告诉我～"
+    ],
+    "_messages_comment": "播报消息列表，会循环播放这些消息"
+  },
+  
+  "idle_fill": {
+    "_comment": "冷场填充配置 - 当直播间长时间无互动时自动发言",
+    "enabled": true,
+    "_enabled_comment": "是否启用冷场填充功能",
+    "idle_threshold_sec": 60,
+    "_idle_threshold_sec_comment": "冷场判定时间（秒），超过此时间无互动则触发填充",
+    "interrupt": false,
+    "_interrupt_comment": "冷场填充是否打断当前内容",
+    "msg_type": "idle_fill",
+    "_msg_type_comment": "消息类型标识",
+    "messages": [
+      "有想看的可以在弹幕里告诉我哦～",
+      "大家还在吗？有什么想聊的～",
+      "欢迎新来的朋友，有问题可以随时问我～"
+    ],
+    "_messages_comment": "冷场填充消息列表，随机选择发送"
+  }
+}

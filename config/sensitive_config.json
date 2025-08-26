@@ -1,0 +1,15 @@
+{
+  "_comment": "敏感词过滤配置文件 - 控制违禁内容的检测和处理",
+  
+  "blacklist": ["违禁词1", "违禁词2", "广告", "刷单", "代购"],
+  "_blacklist_comment": "敏感词黑名单列表，包含这些词的消息会被过滤或替换",
+  
+  "strategy": "drop",
+  "_strategy_comment": "处理策略: mask=替换为*号, block=完全屏蔽消息, drop=丢弃消息",
+  
+  "mask_char": "*",
+  "_mask_char_comment": "替换字符，当strategy为mask时使用此字符替换敏感词",
+  
+  "whitelist": ["主播", "直播", "商品"],
+  "_whitelist_comment": "白名单词汇，即使包含敏感词也不会被过滤（可选配置）"
+}

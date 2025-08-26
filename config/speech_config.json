@@ -1,0 +1,67 @@
+{
+  "_comment": "话术配置文件 - 控制AI回复的话术模板和规则",
+  
+  "templates": {
+    "_comment": "通用话术模板库",
+    "greeting": [
+      "大家好，我是{avatar}，欢迎来到直播间！",
+      "欢迎新朋友，我是{avatar}，很高兴见到大家～",
+      "大家好呀，今天又和大家见面啦～"
+    ],
+    "_greeting_comment": "问候语模板，{avatar}会被替换为主播名称",
+    
+    "fallback": [
+      "这条消息我先跳过，继续看下一条～",
+      "这个问题有点复杂，我们先看看其他的～",
+      "让我想想怎么回答，先看下一条弹幕～"
+    ],
+    "_fallback_comment": "兜底回复模板，当无法理解或处理消息时使用",
+    
+    "random_replies": [
+      "哈哈，{username}说得有道理～",
+      "感谢{username}的支持！",
+      "{username}的想法很有趣呢～",
+      "好的好的，{username}我听到了～",
+      "谢谢{username}，你真贴心～"
+    ],
+    "_random_replies_comment": "随机回复模板，用于增加回复的多样性"
+  },
+  
+  "reply_rules": [
+    {
+      "match": "上链接",
+      "template": "商品链接已置顶，{username}可以点击查看哦～",
+      "priority": 10
+    },
+    {
+      "match": "多少钱|价格|多钱",
+      "template": "价格信息在商品详情里哦，{username}可以点击查看～",
+      "priority": 9
+    },
+    {
+      "match": "好看|漂亮|美",
+      "template": "谢谢{username}的夸奖，你的眼光真好～",
+      "priority": 5
+    }
+  ],
+  "_reply_rules_comment": "智能回复规则，match支持正则表达式，priority越高优先级越高",
+  
+  "gift_thanks": [
+    {
+      "min_price": 100,
+      "template": "哇！感谢{username}送出的{giftName}x{giftCount}！太感动了！",
+      "priority": 10
+    },
+    {
+      "min_price": 10,
+      "template": "感谢{username}送出的{giftName}x{giftCount}！爱你哦～",
+      "priority": 8
+    },
+    {
+      "min_price": 1,
+      "template": "感谢{username}送出的{giftName}x{giftCount}！",
+      "priority": 5
+    }
+  ],
+  "_gift_thanks_comment": "礼物感谢模板，根据礼物价值使用不同的感谢话术"
+}
