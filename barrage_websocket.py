@@ -95,6 +95,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # "SUPER_CHAT": 0
     }
 }
+DEFAULT_CONFIG["rules"] = {
+    "global": {
+        "min_len": 1,
+        "max_len": 120,
+        "rate_limit_per_min": 60
+    }
+}
 
 
 def load_config(path: Optional[str]) -> Dict[str, Any]:
@@ -122,21 +129,23 @@ def load_config(path: Optional[str]) -> Dict[str, Any]:
                             cfg['types'][k] = v
                 if 'sessions' in user_cfg and isinstance(user_cfg['sessions'], dict):
                     cfg['sessions'].update(user_cfg['sessions'])
+                if 'rules' in user_cfg and isinstance(user_cfg['rules'], dict):
+                    cfg['rules'] = user_cfg['rules']
     except Exception as e:
         logging.warning(f"加载配置失败，使用默认配置: {e}")
     return cfg
 
-# ===== 外部配置（话术/敏感词/定时/弹幕规则） ===== #
+# ===== 外部配置（话术/敏感词/定时） ===== #
 SPEECH_CFG: Dict[str, Any] = {}
 SENSITIVE_CFG: Dict[str, Any] = {}
 SCHEDULE_CFG: Dict[str, Any] = {}
-RULES_CFG: Dict[str, Any] = {}
+BARRAGE_CFG: Dict[str, Any] = {}
 
 # 外部配置路径
 SPEECH_PATH = 'config/speech_config.json'
 SENSITIVE_PATH = 'config/sensitive_config.json'
 SCHEDULE_PATH = 'config/schedule_config.json'
-RULES_PATH = 'config/barrage_rules.json'
+BARRAGE_CFG_PATH = 'config/barrage_config.json'
 
 _RATE_WINDOW_START = 0.0
 _RATE_COUNT = 0
@@ -151,23 +160,25 @@ def _safe_load_json(path: str) -> Dict[str, Any]:
         if os.path.exists(path):
             with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f) or {}
+        # 文件不存在时返回空字典，避免 None
+        return {}
     except Exception as e:
         logging.warning(f"加载配置失败 {path}: {e}")
-    return {}
+        return {}
 
 def load_external_configs():
-    """加载四类外部配置文件。"""
-    global SPEECH_CFG, SENSITIVE_CFG, SCHEDULE_CFG, RULES_CFG
+    """加载外部配置文件（speech/sensitive/schedule 以及 barrage_config）。"""
+    global SPEECH_CFG, SENSITIVE_CFG, SCHEDULE_CFG, BARRAGE_CFG
     SPEECH_CFG = _safe_load_json(SPEECH_PATH)
     SENSITIVE_CFG = _safe_load_json(SENSITIVE_PATH)
     SCHEDULE_CFG = _safe_load_json(SCHEDULE_PATH)
-    RULES_CFG = _safe_load_json(RULES_PATH)
-    logging.info("外部配置已加载：speech/sensitive/schedule/rules")
+    BARRAGE_CFG = _safe_load_json(BARRAGE_CFG_PATH)
+    logging.info("外部配置已加载：speech/sensitive/schedule/barrage_config")
 
 async def _config_watcher_loop(poll_sec: int = 2):
     """简单的轮询热加载，无需额外依赖。"""
     last: Dict[str, float] = {}
-    paths = [SPEECH_PATH, SENSITIVE_PATH, SCHEDULE_PATH, RULES_PATH]
+    paths = [SPEECH_PATH, SENSITIVE_PATH, SCHEDULE_PATH, BARRAGE_CFG_PATH]
     # 初始化时间戳
     for p in paths:
         try:
@@ -180,15 +191,15 @@ async def _config_watcher_loop(poll_sec: int = 2):
             changed = False
             for p in paths:
                 try:
-                    mt = os.path.getmtime(p) if os.path.exists(p) else 0.0
+                    ts = os.path.getmtime(p) if os.path.exists(p) else 0.0
                 except Exception:
-                    mt = 0.0
-                if mt != last.get(p, 0.0):
+                    ts = 0.0
+                if ts != last.get(p, -1.0):
+                    last[p] = ts
                     changed = True
-                    last[p] = mt
             if changed:
                 load_external_configs()
-                logging.info("检测到配置文件变更，已热加载")
+                logging.info("外部配置已热加载。")
         except Exception as e:
             logging.warning(f"配置热加载异常: {e}")
 
@@ -250,21 +261,11 @@ def should_reply_to_danmu(ctx: Dict[str, Any], config: Dict[str, Any]) -> bool:
         logging.info(f"[回复控制] 达到每分钟最大回复数({max_replies})")
         return False
     
-    priority_keywords = reply_ctrl.get('priority_keywords', [])
-    has_priority = any(keyword in content for keyword in priority_keywords)
-    
-    logging.info(f"[关键词检查] 内容:'{content}' | 优先关键词:{priority_keywords} | 匹配:{has_priority}")
-    
-    if has_priority:
-        logging.info(f"[优先回复] 包含关键词: {content[:30]}")
-        _REPLY_COUNT += 1
-        return True
-    
-    # 基于概率决定是否回复
+    # 仅基于概率决定是否回复（不再使用关键词强制回复）
     reply_prob = reply_ctrl.get('reply_probability', 0.8)
     if random.random() < reply_prob:
         _REPLY_COUNT += 1
-        logging.info(f"[随机回复] 概率命中({reply_prob}): {content[:30]}")
+        logging.info(f"[回复决定] 概率命中({reply_prob}): {content[:30]}")
         return True
     
     logging.info(f"[跳过回复] 概率未命中({reply_prob}): {content[:30]}")
@@ -346,10 +347,10 @@ def get_random_reply_template(ctx: Dict[str, Any]) -> Optional[str]:
     logging.info(f"[随机模板] 选择: {selected}")
     return selected
 
-def check_barrage_global(text_for_len: str) -> bool:
-    """检查全局弹幕规则（长度与速率限制）。"""
+def check_barrage_global(text_for_len: str, config: Dict[str, Any]) -> bool:
+    """检查全局弹幕规则（长度与速率限制），从 barrage_config.rules.global 读取。"""
     global _RATE_WINDOW_START, _RATE_COUNT
-    g = RULES_CFG.get('global') or {}
+    g = ((config.get('rules') or {}).get('global') or {})
     min_len = int(g.get('min_len', 0) or 0)
     max_len = int(g.get('max_len', 0) or 0)
     if min_len and len(text_for_len) < min_len:
@@ -374,30 +375,47 @@ def update_activity():
     _LAST_ACTIVITY_TS = time.time()
 
 async def scheduler_loop(http_session: aiohttp.ClientSession, config: Dict[str, Any]):
-    """内置调度：自动播报与冷场填充。"""
+    """内置调度：自动播报与冷场填充。
+    修复：不使用 time % interval 方式，避免错过触发；增加详尽日志；冷场消息随机选择与防抖。
+    """
     auto_cfg = (SCHEDULE_CFG.get('auto_broadcast') or {})
     idle_cfg = (SCHEDULE_CFG.get('idle_fill') or {})
     auto_idx = 0
+    last_auto_ts = time.time()  # 上次自动播报时间
+    last_idle_sent_ts = 0.0     # 上次冷场填充发送时间
+
     while True:
         await asyncio.sleep(1)
         try:
+            now = time.time()
+
             # 自动播报
             if auto_cfg.get('enabled') and (auto_cfg.get('messages')):
                 interval = int(auto_cfg.get('interval_sec', 0) or 0)
-                if interval > 0 and int(time.time()) % interval == 0:
+                if interval > 0 and (now - last_auto_ts) >= interval:
                     msg = auto_cfg['messages'][auto_idx % len(auto_cfg['messages'])]
                     auto_idx += 1
                     auto_interrupt = bool(auto_cfg.get('interrupt', False))
                     auto_type = auto_cfg.get('msg_type')
+                    logging.info(f"[定时-自动播报] 触发 | 间隔:{interval}s | 文本:{str(msg)[:50]}")
                     await _send_human_text(http_session, config, str(msg), interrupt=auto_interrupt, msg_type=auto_type)
+                    last_auto_ts = now
                     update_activity()
+
             # 冷场填充
             if idle_cfg.get('enabled') and (idle_cfg.get('messages')):
                 th = int(idle_cfg.get('idle_threshold_sec', 0) or 0)
-                if th > 0 and (time.time() - _LAST_ACTIVITY_TS) >= th:
+                if th > 0 and (now - _LAST_ACTIVITY_TS) >= th and (now - last_idle_sent_ts) >= th:
                     idle_interrupt = bool(idle_cfg.get('interrupt', False))
                     idle_type = idle_cfg.get('msg_type')
-                    await _send_human_text(http_session, config, str(idle_cfg['messages'][0]), interrupt=idle_interrupt, msg_type=idle_type)
+                    # 随机选择一条冷场消息
+                    try:
+                        msg = random.choice(idle_cfg['messages'])
+                    except Exception:
+                        msg = idle_cfg['messages'][0]
+                    logging.info(f"[定时-冷场填充] 触发 | 静默≥{th}s | 文本:{str(msg)[:50]}")
+                    await _send_human_text(http_session, config, str(msg), interrupt=idle_interrupt, msg_type=idle_type)
+                    last_idle_sent_ts = now
                     update_activity()
         except Exception as e:
             logging.warning(f"调度任务异常: {e}")
@@ -434,10 +452,36 @@ async def _send_human_text(http_session: aiohttp.ClientSession, config: Dict[str
         "interrupt": interrupt,
         "sessionid": sessionid
     }
+    # 便于排查：中文直显，附带 human_url 与 msg_type
+    try:
+        logging.info(
+            "[HUMAN-PAYLOAD] url=%s | msg_type=%s | %s",
+            str(config.get('human_url')),
+            str(msg_type or ''),
+            json.dumps(payload, ensure_ascii=False)
+        )
+    except Exception:
+        logging.info("[HUMAN-PAYLOAD] %s", str(payload))
     try:
         async with http_session.post(config.get('human_url'), json=payload, timeout=10) as resp:
+            response_text = await resp.text()
             if resp.status != 200:
-                logging.warning(f"/human 返回非200: {resp.status}")
+                logging.warning(
+                    "[/human错误] 状态码:%s | 响应:%s | 请求:%s",
+                    resp.status,
+                    response_text,
+                    json.dumps(payload, ensure_ascii=False)
+                )
+            else:
+                # 输出成功响应，尽量解析为 JSON 结构
+                try:
+                    response_json = json.loads(response_text)
+                    logging.info("[/human成功] 代码:%s | 消息:%s | 原始:%s",
+                                 str(response_json.get('code', '')),
+                                 str(response_json.get('msg', '')),
+                                 json.dumps(response_json, ensure_ascii=False))
+                except json.JSONDecodeError:
+                    logging.info("[/human成功] 响应:%s", response_text)
     except Exception as e:
         logging.warning(f"调用 /human 异常: {e}")
 
@@ -531,6 +575,269 @@ def normalize_incoming(obj: Any) -> list:
         return res
     return res
 
+
+def _extract_json_objects(text: str) -> list:
+    """
+    从可能包含噪音/拼接/包裹的文本中提取一个或多个 JSON 对象或数组。
+    处理要点：
+    - 去除 BOM 与首尾空白
+    - 直接整体解析；失败则按括号配对在顶层提取 {..} 或 [..]
+    - 若解析结果为字符串且形如 JSON，再进行二次解析
+    返回解析后的 Python 对象列表。
+    """
+    results = []
+
+    if not isinstance(text, str) or not text:
+        return results
+
+    # 去 BOM/空白
+    s = text.lstrip('\ufeff').strip()
+
+    def try_load(piece: str):
+        try:
+            obj = json.loads(piece)
+            # 如果是被字符串包裹的 JSON，再尝试二次解析
+            if isinstance(obj, str):
+                st = obj.lstrip('\ufeff').strip()
+                if (st.startswith('{') and st.endswith('}')) or (st.startswith('[') and st.endswith(']')):
+                    try:
+                        return json.loads(st)
+                    except Exception:
+                        return obj
+            return obj
+        except Exception:
+            return None
+
+    # 1) 整体尝试
+    obj = try_load(s)
+    if obj is not None:
+        return [obj]
+
+    # 2) 基于括号配对切分（考虑字符串转义）
+    in_string = False
+    escape = False
+    depth = 0
+    start_idx = None
+    open_char = None
+
+    def is_open(c):
+        return c in '{['
+
+    def is_close(c):
+        return c in '}]'
+
+    pairs = {']': '[', '}': '{'}
+
+    for i, ch in enumerate(s):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if depth == 0 and is_open(ch):
+            start_idx = i
+            open_char = ch
+            depth = 1
+            continue
+
+        if depth > 0:
+            if is_open(ch):
+                depth += 1
+            elif is_close(ch):
+                # 合法配对才减少
+                if pairs.get(ch) == open_char or depth > 1:
+                    depth -= 1
+                # 当回到顶层，截取候选
+                if depth == 0 and start_idx is not None:
+                    piece = s[start_idx:i+1]
+                    parsed = try_load(piece)
+                    if parsed is not None:
+                        results.append(parsed)
+                    start_idx = None
+                    open_char = None
+
+    if not results:
+        # 维持原观测性：打印原文（截断避免刷屏）
+        logging.info(f"收到非JSON文本: {s[:500]}")
+    return results
+def _extract_json_pieces(text: str) -> list:
+    """
+    与 _extract_json_objects 类似，但返回 (obj, start, end) 列表，
+    便于调用方从原始文本中移除已消费的 JSON 片段并保留尾部未完成的残余。
+    """
+    pieces = []
+
+    if not isinstance(text, str) or not text:
+        return pieces
+
+    s = text.lstrip('\ufeff').strip()
+
+    def try_load(piece: str):
+        try:
+            obj = json.loads(piece)
+            if isinstance(obj, str):
+                st = obj.lstrip('\ufeff').strip()
+                if (st.startswith('{') and st.endswith('}')) or (st.startswith('[') and st.endswith(']')):
+                    try:
+                        return json.loads(st)
+                    except Exception:
+                        return obj
+            return obj
+        except Exception:
+            return None
+
+    # 整体尝试（若成功，返回整段）
+    obj = try_load(s)
+    if obj is not None:
+        # 计算在原始 text 中的位置（s 去除了前后空白，因此定位到原文需要查找）
+        idx = text.find(s)
+        if idx >= 0:
+            pieces.append((obj, idx, idx + len(s)))
+        else:
+            pieces.append((obj, 0, len(text)))
+        return pieces
+
+    # 括号配对扫描，生成分片
+    in_string = False
+    escape = False
+    depth = 0
+    start_idx = None
+    open_char = None
+
+    def is_open(c):
+        return c in '{['
+
+    def is_close(c):
+        return c in '}]'
+
+    pairs = {']': '[', '}': '{'}
+
+    for i, ch in enumerate(s):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if depth == 0 and is_open(ch):
+            start_idx = i
+            open_char = ch
+            depth = 1
+            continue
+
+        if depth > 0:
+            if is_open(ch):
+                depth += 1
+            elif is_close(ch):
+                if pairs.get(ch) == open_char or depth > 1:
+                    depth -= 1
+                if depth == 0 and start_idx is not None:
+                    piece = s[start_idx:i+1]
+                    parsed = try_load(piece)
+                    if parsed is not None:
+                        # 映射回原始 text 的区间
+                        base = text.find(s)
+                        begin = (base if base >= 0 else 0) + start_idx
+                        end = (base if base >= 0 else 0) + i + 1
+                        pieces.append((parsed, begin, end))
+                    start_idx = None
+                    open_char = None
+
+    return pieces
+
+    # 去 BOM/空白
+    s = text.lstrip('\ufeff').strip()
+
+    def try_load(piece: str):
+        try:
+            obj = json.loads(piece)
+            # 如果是被字符串包裹的 JSON，再尝试二次解析
+            if isinstance(obj, str):
+                st = obj.lstrip('\ufeff').strip()
+                if (st.startswith('{') and st.endswith('}')) or (st.startswith('[') and st.endswith(']')):
+                    try:
+                        return json.loads(st)
+                    except Exception:
+                        return obj
+            return obj
+        except Exception:
+            return None
+
+    # 1) 整体尝试
+    obj = try_load(s)
+    if obj is not None:
+        return [obj]
+
+    # 2) 基于括号配对切分（考虑字符串转义）
+    in_string = False
+    escape = False
+    depth = 0
+    start_idx = None
+    open_char = None
+
+    def is_open(c):
+        return c in '{['
+
+    def is_close(c):
+        return c in '}]'
+
+    pairs = {']': '[', '}': '{'}
+
+    for i, ch in enumerate(s):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if depth == 0 and is_open(ch):
+            start_idx = i
+            open_char = ch
+            depth = 1
+            continue
+
+        if depth > 0:
+            if is_open(ch):
+                depth += 1
+            elif is_close(ch):
+                # 合法配对才减少
+                if pairs.get(ch) == open_char or depth > 1:
+                    depth -= 1
+                # 当回到顶层，截取候选
+                if depth == 0 and start_idx is not None:
+                    piece = s[start_idx:i+1]
+                    parsed = try_load(piece)
+                    if parsed is not None:
+                        results.append(parsed)
+                    start_idx = None
+                    open_char = None
+
+    if not results:
+        # 维持原观测性：打印原文（截断避免刷屏）
+        logging.info(f"收到非JSON文本: {s[:500]}")
+    return results
 
 def render_template(tpl: str, ctx: Dict[str, Any]) -> str:
     """安全渲染模板：使用 format_map，缺失字段置空。"""
@@ -683,23 +990,36 @@ class ChannelSubscriber(Subscriber):
         if msg_type == 'DANMU':
             if not should_reply_to_danmu(ctx, self._config):
                 return
-        
-        # 话术规则匹配优先
-        tpl = match_reply_template(msg_type, ctx)
-        if not tpl and msg_type == 'DANMU':
-            # 如果没有匹配到特定规则，使用随机回复模板
-            tpl = get_random_reply_template(ctx)
-        if not tpl:
-            # 最后使用默认模板
-            tpl = cfg.get('template', '')
-        
-        text = render_template(tpl, ctx) if tpl else ctx.get('content', '')
+
+        # DANMU 文本与动作策略：命中 reply_rules -> 模板回复；否则 -> chat 大模型
+        action = str(cfg.get('action', 'echo'))
+        content = str(ctx.get('content', '') or '')
+        if msg_type == 'DANMU':
+            tpl = match_reply_template(msg_type, ctx)
+            if tpl:
+                # 命中规则，使用模板渲染；动作使用配置默认（通常为 echo）
+                text = render_template(tpl, ctx)
+                action = str(cfg.get('action', 'echo'))
+                logging.info(f"[话术命中] 使用模板回复 | 模板:{tpl} | 内容:{content[:50]}")
+            else:
+                # 未命中规则，切换为 chat 并把原文交给大模型
+                action = 'chat'
+                text = content
+                logging.info(f"[话术未命中] 切换 chat 智能回复 | 内容:{content[:50]}")
+        else:
+            # 非 DANMU 沿用原逻辑：模板优先 -> 默认模板
+            tpl = match_reply_template(msg_type, ctx)
+            if not tpl:
+                tpl = cfg.get('template', '')
+            text = render_template(tpl, ctx) if tpl else content
         text = str(text).strip()
         if not text:
             return
 
         # 全局弹幕规则（长度与限流）
-        if not check_barrage_global(text):
+        # 优先使用最新的全局配置（BARRAGE_CFG），否则回退到实例加载的配置
+        runtime_cfg = BARRAGE_CFG if BARRAGE_CFG else self._config
+        if not check_barrage_global(text, runtime_cfg):
             logging.info(f"[全局过滤] 用户:{ctx.get('username','')} | 原因:违反全局规则 | 文本:{text[:30]}")
             return
 
@@ -718,7 +1038,7 @@ class ChannelSubscriber(Subscriber):
 
         payload = {
             "text": text,
-            "type": str(cfg.get('action', 'echo')),
+            "type": action,
             "interrupt": interrupt,
             "sessionid": sessionid
         }
@@ -825,6 +1145,7 @@ async def ws_listen(websocket_uri: str, human_url: str, config_path: Optional[st
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(websocket_uri) as ws:
                     logging.info(f"WS 已连接: {websocket_uri}")
+                    buffer = ""
                     async for msg in ws:
                         text = None
                         if msg.type == aiohttp.WSMsgType.BINARY:
@@ -843,70 +1164,79 @@ async def ws_listen(websocket_uri: str, human_url: str, config_path: Optional[st
                         if not text:
                             continue
 
-                        # 尝试解析并规范化为一个或多个消息
-                        try:
-                            raw = json.loads(text)
-                        except Exception:
-                            logging.info(f"收到非JSON文本: {text[:200]}")
-                            continue
+                        # 累积缓冲，处理带噪音前缀或跨帧拼接
+                        buffer += text
 
-                        msgs = normalize_incoming(raw)
-                        if not msgs:
-                            continue
-                        
-                        for msg_dto in msgs:
-                            if not isinstance(msg_dto, dict):
-                                continue
-                            
-                            msg_type = msg_dto.get('type')
-                            room_id = msg_dto.get('roomId', '')
-                            msg = msg_dto.get('msg', {}) or {}
-                            
-                            # 详细的消息接收日志（与RSocket保持一致）
-                            if msg_type == "DANMU":
-                                badge_info = f"{msg.get('badgeLevel','')}{msg.get('badgeName','')}" if msg.get('badgeLevel',0) else ''
-                                logging.info(
-                                    f"[弹幕接收] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
-                                    f"徽章:{badge_info} | 内容:{msg.get('content','')} | 平台:{msg.get('platform','')}"
-                                )
-                            elif msg_type == "GIFT":
-                                badge_info = f"{msg.get('badgeLevel','')}{msg.get('badgeName','')}" if msg.get('badgeLevel',0) else ''
-                                action = msg.get('action') or '赠送'
-                                logging.info(
-                                    f"[礼物接收] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
-                                    f"徽章:{badge_info} | {action}:{msg.get('giftName','')}x{msg.get('giftCount',1)} | "
-                                    f"价值:{msg.get('giftPrice',0)} | 平台:{msg.get('platform','')}"
-                                )
-                            elif msg_type == "SUPER_CHAT":
-                                logging.info(
-                                    f"[醒目留言] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
-                                    f"内容:{msg.get('content','')} | 价格:{msg.get('price',0)} | 平台:{msg.get('platform','')}"
-                                )
-                            elif msg_type == "LIVE_STATUS_CHANGE":
-                                logging.info(
-                                    f"[直播状态] 房间:{room_id} | 状态变更:{msg.get('status','')} | 平台:{msg.get('platform','')}"
-                                )
-                            elif msg_type == "ENTER_ROOM":
-                                logging.info(
-                                    f"[进入房间] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | 平台:{msg.get('platform','')}"
-                                )
-                            elif msg_type == "LIKE":
-                                logging.info(
-                                    f"[点赞] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | 平台:{msg.get('platform','')}"
-                                )
-                            elif msg_type == "ROOM_STATS":
-                                logging.info(
-                                    f"[房间统计] 房间:{room_id} | 在线:{msg.get('online','')} | 热度:{msg.get('hot','')} | "
-                                    f"点赞:{msg.get('likes','')} | 平台:{msg.get('platform','')}"
-                                )
-                            else:
-                                logging.info(f"[未知消息] 类型:{msg_type} | 房间:{room_id} | 数据:{json.dumps(msg_dto, ensure_ascii=False)[:200]}")
+                        while True:
+                            pieces = _extract_json_pieces(buffer)
+                            if not pieces:
+                                # 若始终无法解析，避免缓冲无限增长，最多保留 1MB 尾部
+                                if len(buffer) > 1024 * 1024:
+                                    buffer = buffer[-512 * 1024:]
+                                break
 
-                            # 调用 /human（按现有过滤与模板规则）
-                            try:
-                                await _ws_maybe_dispatch(http_session, cfg, msg_dto)
-                            except Exception as e:
-                                logging.error(f"[调度失败] 消息类型:{msg_type} | 房间:{room_id} | 错误:{e}")
+                            # 顺序处理分片，仅保留最后一个分片后的尾部作为残余
+                            last_end = 0
+                            for raw, start, end in pieces:
+                                last_end = max(last_end, end)
+                                msgs = normalize_incoming(raw)
+                                if not msgs:
+                                    continue
+                                for msg_dto in msgs:
+                                    if not isinstance(msg_dto, dict):
+                                        continue
+                                    msg_type = msg_dto.get('type')
+                                    room_id = msg_dto.get('roomId', '')
+                                    msg = msg_dto.get('msg', {}) or {}
+
+                                    # 详细的消息接收日志（与RSocket保持一致）
+                                    if msg_type == "DANMU":
+                                        badge_info = f"{msg.get('badgeLevel','')}{msg.get('badgeName','')}" if msg.get('badgeLevel',0) else ''
+                                        logging.info(
+                                            f"[弹幕接收] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
+                                            f"徽章:{badge_info} | 内容:{msg.get('content','')} | 平台:{msg.get('platform','')}"
+                                        )
+                                    elif msg_type == "GIFT":
+                                        badge_info = f"{msg.get('badgeLevel','')}{msg.get('badgeName','')}" if msg.get('badgeLevel',0) else ''
+                                        action = msg.get('action') or '赠送'
+                                        logging.info(
+                                            f"[礼物接收] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
+                                            f"徽章:{badge_info} | {action}:{msg.get('giftName','')}x{msg.get('giftCount',1)} | "
+                                            f"价值:{msg.get('giftPrice',0)} | 平台:{msg.get('platform','')}"
+                                        )
+                                    elif msg_type == "SUPER_CHAT":
+                                        logging.info(
+                                            f"[醒目留言] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
+                                            f"内容:{msg.get('content','')} | 价格:{msg.get('price',0)} | 平台:{msg.get('platform','')}"
+                                        )
+                                    elif msg_type == "LIVE_STATUS_CHANGE":
+                                        logging.info(
+                                            f"[直播状态] 房间:{room_id} | 状态变更:{msg.get('status','')} | 平台:{msg.get('platform','')}"
+                                        )
+                                    elif msg_type == "ENTER_ROOM":
+                                        logging.info(
+                                            f"[进入房间] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | 平台:{msg.get('platform','')}"
+                                        )
+                                    elif msg_type == "LIKE":
+                                        logging.info(
+                                            f"[点赞] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | 平台:{msg.get('platform','')}"
+                                        )
+                                    elif msg_type == "ROOM_STATS":
+                                        logging.info(
+                                            f"[房间统计] 房间:{room_id} | 在线:{msg.get('online','')} | 热度:{msg.get('hot','')} | "
+                                            f"点赞:{msg.get('likes','')} | 平台:{msg.get('platform','')}"
+                                        )
+                                    else:
+                                        logging.info(f"[未知消息] 类型:{msg_type} | 房间:{room_id} | 数据:{json.dumps(msg_dto, ensure_ascii=False)[:200]}")
+
+                                    # 调用 /human（按现有过滤与模板规则）
+                                    try:
+                                        await _ws_maybe_dispatch(http_session, cfg, msg_dto)
+                                    except Exception as e:
+                                        logging.error(f"[调度失败] 消息类型:{msg_type} | 房间:{room_id} | 错误:{e}")
+
+                            # 仅保留最后一个 JSON 片段之后的残余字符串
+                            buffer = buffer[last_end:]
         except Exception as e:
             logging.error(f"WS 连接失败: {e}")
 
@@ -956,42 +1286,17 @@ async def _ws_maybe_dispatch(http_session: aiohttp.ClientSession, config: Dict[s
     # 动态选择回复模式（仅对弹幕）
     if msg_type == 'DANMU':
         content = str(ctx.get('content', '') or '')
-        reply_ctrl = config.get('reply_control', {})
-        chat_keywords = reply_ctrl.get('chat_keywords', [])
-        
-        # 检查是否需要使用chat模式
-        needs_chat = any(keyword in content for keyword in chat_keywords)
-        current_action = 'chat' if needs_chat else cfg.get('action', 'echo')
-        
-        logging.info(f"[模式选择] 内容:'{content[:20]}' | 模式:{current_action} | chat关键词:{needs_chat}")
-        
-        # 优先匹配话术规则（不论什么模式）
+        # 优先匹配话术规则；未命中则直接走 chat，并使用原文
         matched_tpl = match_reply_template(msg_type, ctx)
         if matched_tpl:
             tpl = matched_tpl
-        elif current_action == 'chat':
-            # 使用随机回复模板
-            random_tpl = get_random_reply_template(ctx)
-            if random_tpl:
-                tpl = random_tpl
-            else:
-                # 使用兜底模板
-                fallback_tpl = get_fallback_template()
-                if fallback_tpl:
-                    tpl = fallback_tpl
-                    logging.info(f"[兜底回复] 使用兜底模板: {ctx.get('content', '')[:30]}")
-                elif not tpl:
-                    logging.info(f"[跳过回复] 无可用模板: {ctx.get('content', '')[:30]}")
-                    return
-        else:  # echo模式
-            # 使用随机回复模板
-            random_tpl = get_random_reply_template(ctx)
-            if random_tpl:
-                tpl = random_tpl
-            elif not tpl:
-                logging.info(f"[随机回复跳过] 无可用模板: {ctx.get('content', '')[:30]}")
-                return
-        
+            current_action = cfg.get('action', 'echo')
+            logging.info(f"[路由] 话术命中 -> echo | 模板:{matched_tpl} | 文本:{content[:30]}")
+        else:
+            tpl = ''  # 使用原文
+            current_action = 'chat'
+            logging.info(f"[路由] 话术未命中 -> chat | 文本:{content[:30]}")
+
         # 更新动作类型用于后续处理
         cfg = dict(cfg)  # 创建副本避免修改原配置
         cfg['action'] = current_action
@@ -1006,17 +1311,18 @@ async def _ws_maybe_dispatch(http_session: aiohttp.ClientSession, config: Dict[s
             logging.info(f"[礼物跳过] 无可用模板，价格:{gift_price}")
             return
     
-    # 检查模板是否存在
+    # 检查模板是否存在；缺失时使用原文
     if not tpl:
-        logging.info(f"[模板缺失] 类型:{msg_type}")
-        return
+        logging.info(f"[模板缺失] 类型:{msg_type} | 使用原文回复")
     
     text = render_template(tpl, ctx) if tpl else ctx.get('content', '')
     text = str(text).strip()
     if not text:
         return
 
-    if not check_barrage_global(text):
+    # 使用运行时的全局弹幕规则配置（优先 BARRAGE_CFG，其次 config）
+    runtime_cfg = BARRAGE_CFG if BARRAGE_CFG else config
+    if not check_barrage_global(text, runtime_cfg):
         return
     text = apply_sensitive_filter(text)
     if text is None:

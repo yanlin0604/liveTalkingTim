@@ -423,7 +423,7 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     speech_file = base_conf / 'speech_config.json'
     sensitive_file = base_conf / 'sensitive_config.json'
     schedule_file = base_conf / 'schedule_config.json'
-    rules_file = base_conf / 'barrage_rules.json'
+    barrage_cfg_file = base_conf / 'barrage_config.json'
 
     async def read_json_file(p: Path):
         try:
@@ -501,25 +501,119 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
         ok, err = await write_json_file(schedule_file, default)
         return api_ok({"reset": ok}) if ok else api_err(f"重置失败: {err}")
 
-    # 弹幕处理配置
-    async def get_barrage_rules(request: web.Request):
-        ok, res = await read_json_file(rules_file)
+
+    # 弹幕主配置（barrage_config.json）
+    async def get_barrage_cfg(request: web.Request):
+        ok, res = await read_json_file(barrage_cfg_file)
         return api_ok(res) if ok else api_err(f"读取失败: {res}")
 
-    async def put_barrage_rules(request: web.Request):
+    async def put_barrage_cfg(request: web.Request):
         try:
             data = await request.json()
         except Exception as e:
             return api_err(f"JSON解析失败: {e}")
-        ok, err = await write_json_file(rules_file, data)
+        ok, err = await write_json_file(barrage_cfg_file, data)
         return api_ok({"saved": ok}) if ok else api_err(f"保存失败: {err}")
 
-    async def reset_barrage_rules(request: web.Request):
+    async def reset_barrage_cfg(request: web.Request):
+        # 与当前文件中的结构保持一致的默认值
         default = {
-            "global": {"min_len": 1, "max_len": 120, "rate_limit_per_min": 60, "interrupt": False},
-            "types": {"DANMU": {"enabled": True, "interrupt": False}, "GIFT": {"enabled": True}, "SUPER_CHAT": {"enabled": True}}
+            "_comment": "弹幕转发配置文件 - 控制各种消息类型的处理方式",
+            "human_url": "http://127.0.0.1:8010/human",
+            "_human_url_comment": "AI服务接口地址，用于发送处理后的消息",
+            "default_sessionid": 1,
+            "_default_sessionid_comment": "默认会话ID，用于区分不同的对话会话",
+            "reply_control": {
+                "_comment": "弹幕回复控制配置",
+                "enabled": True,
+                "reply_probability": 0.8,
+                "_reply_probability_comment": "弹幕回复概率 (0.0-1.0)，0.3表示30%的弹幕会被回复",
+                "max_replies_per_minute": 10,
+                "_max_replies_per_minute_comment": "每分钟最大回复数量，防止过度回复"
+            },
+            "rules": {
+                "global": {
+                    "min_len": 1,
+                    "max_len": 120,
+                    "rate_limit_per_min": 60
+                }
+            },
+            "types": {
+                "DANMU": {
+                    "_comment": "弹幕消息配置",
+                    "enabled": True,
+                    "_enabled_comment": "是否启用此类型消息的处理",
+                    "action": "echo",
+                    "_action_comment": "处理动作：chat=对话回复, echo=直接复述",
+                    "interrupt": False,
+                    "_interrupt_comment": "是否打断当前播放内容",
+                    "min_length": 1,
+                    "_min_length_comment": "弹幕最小长度，小于此长度的弹幕会被忽略",
+                    "max_length": 120,
+                    "_max_length_comment": "弹幕最大长度，超过会被截断"
+                },
+                "GIFT": {
+                    "_comment": "礼物消息配置",
+                    "enabled": True,
+                    "action": "echo",
+                    "template": "感谢{username}送出的{giftName}x{giftCount}！",
+                    "interrupt": False,
+                    "min_gift_price": 0,
+                    "_min_gift_price_comment": "最小礼物价值，低于此价值的礼物不会触发感谢"
+                },
+                "SUPER_CHAT": {
+                    "_comment": "醒目留言/SC配置",
+                    "enabled": True,
+                    "action": "echo",
+                    "template": "感谢醒目留言，{username}：{content}",
+                    "interrupt": True,
+                    "_interrupt_comment": "SC通常会打断当前内容",
+                    "min_price": 0,
+                    "_min_price_comment": "最小SC价格"
+                },
+                "ENTER_ROOM": {
+                    "_comment": "进入房间消息配置",
+                    "enabled": False,
+                    "_enabled_comment": "通常关闭，避免过多欢迎消息",
+                    "action": "echo",
+                    "template": "欢迎{username}进入直播间",
+                    "interrupt": False
+                },
+                "LIKE": {
+                    "_comment": "点赞消息配置",
+                    "enabled": False,
+                    "action": "echo",
+                    "template": "{username} 点赞了直播",
+                    "interrupt": False
+                },
+                "LIVE_STATUS_CHANGE": {
+                    "_comment": "直播状态变更配置",
+                    "enabled": False,
+                    "action": "echo",
+                    "template": "直播状态变更：{status}",
+                    "interrupt": True
+                },
+                "ROOM_STATS": {
+                    "_comment": "房间统计信息配置",
+                    "enabled": False,
+                    "action": "echo",
+                    "template": "当前在线{online}，热度{hot}，点赞{likes}",
+                    "interrupt": False
+                },
+                "SOCIAL": {
+                    "_comment": "社交动作配置（关注、分享等）",
+                    "enabled": False,
+                    "action": "echo",
+                    "template": "{username}{action}",
+                    "interrupt": False
+                }
+            },
+            "sessions": {
+                "_comment": "为不同消息类型指定特定的会话ID",
+                "_example": "DANMU: 681008, GIFT: 681009"
+            }
         }
-        ok, err = await write_json_file(rules_file, default)
+        ok, err = await write_json_file(barrage_cfg_file, default)
         return api_ok({"reset": ok}) if ok else api_err(f"重置失败: {err}")
 
     # 路由注册
@@ -535,9 +629,10 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     app.router.add_put('/schedule_config', put_schedule_cfg)
     app.router.add_post('/schedule_config/reset', reset_schedule_cfg)
 
-    app.router.add_get('/barrage_rules', get_barrage_rules)
-    app.router.add_put('/barrage_rules', put_barrage_rules)
-    app.router.add_post('/barrage_rules/reset', reset_barrage_rules)
+
+    app.router.add_get('/barrage_config', get_barrage_cfg)
+    app.router.add_put('/barrage_config', put_barrage_cfg)
+    app.router.add_post('/barrage_config/reset', reset_barrage_cfg)
     
     # 音频管理接口
     app.router.add_post("/audio/upload", audio_api.upload_file)         # 上传本地音频文件

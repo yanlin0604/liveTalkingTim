@@ -4,27 +4,11 @@
   "templates": {
     "_comment": "通用话术模板库",
     "greeting": [
-      "大家好，我是{avatar}，欢迎来到直播间！",
-      "欢迎新朋友，我是{avatar}，很高兴见到大家～",
+      "大家好，我是小小，欢迎来到直播间！",
+      "欢迎新朋友，我是小小，很高兴见到大家～",
       "大家好呀，今天又和大家见面啦～"
     ],
-    "_greeting_comment": "问候语模板，{avatar}会被替换为主播名称",
-    
-    "fallback": [
-      "这条消息我先跳过，继续看下一条～",
-      "这个问题有点复杂，我们先看看其他的～",
-      "让我想想怎么回答，先看下一条弹幕～"
-    ],
-    "_fallback_comment": "兜底回复模板，当无法理解或处理消息时使用",
-    
-    "random_replies": [
-      "哈哈，{username}说得有道理～",
-      "感谢{username}的支持！",
-      "{username}的想法很有趣呢～",
-      "好的好的，{username}我听到了～",
-      "谢谢{username}，你真贴心～"
-    ],
-    "_random_replies_comment": "随机回复模板，用于增加回复的多样性"
+    "_greeting_comment": "问候语模板"
   },
   
   "reply_rules": [

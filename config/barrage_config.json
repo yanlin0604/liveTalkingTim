@@ -4,7 +4,7 @@
   "human_url": "http://127.0.0.1:8010/human",
   "_human_url_comment": "AI服务接口地址，用于发送处理后的消息",
   
-  "default_sessionid": 681008,
+  "default_sessionid": 1,
   "_default_sessionid_comment": "默认会话ID，用于区分不同的对话会话",
   
   "reply_control": {
@@ -13,15 +13,23 @@
     "reply_probability": 0.8,
     "_reply_probability_comment": "弹幕回复概率 (0.0-1.0)，0.3表示30%的弹幕会被回复",
     "max_replies_per_minute": 10,
-    "_max_replies_per_minute_comment": "每分钟最大回复数量，防止过度回复",
-    "priority_keywords": ["主播", "好看", "喜欢", "关注", "点赞"],
-    "_priority_keywords_comment": "包含这些关键词的弹幕会优先回复",
-    "chat_keywords": ["怎么", "为什么", "什么时候", "哪里", "推荐", "建议"],
-    "_chat_keywords_comment": "包含这些关键词的弹幕使用chat模式，需要AI智能回复"
+    "_max_replies_per_minute_comment": "每分钟最大回复数量，防止过度回复"
+  },
+  
+  "rules": {
+    "_comment": "全局弹幕规则配置",
+    "global": {
+      "_comment": "适用于所有消息类型的全局限制",
+      "min_len": 1,
+      "_min_len_comment": "最小长度，低于该长度的弹幕会被忽略",
+      "max_len": 120,
+      "_max_len_comment": "最大长度，超过会被截断后再处理",
+      "rate_limit_per_min": 60,
+      "_rate_limit_per_min_comment": "每分钟允许通过的弹幕条数上限（0 表示不限制）"
+    }
   },
   
   "types": {
-    "_comment": "各种消息类型的处理配置",
     
     "DANMU": {
       "_comment": "弹幕消息配置",
@@ -29,8 +37,6 @@
       "_enabled_comment": "是否启用此类型消息的处理",
       "action": "echo",
       "_action_comment": "处理动作：chat=对话回复, echo=直接复述",
-      "template": "{username}说：{content}",
-      "_template_comment": "消息模板，可用变量：{username}, {content}, {platform}等",
       "interrupt": false,
       "_interrupt_comment": "是否打断当前播放内容",
       "min_length": 1,
