@@ -1,0 +1,10 @@
+{
+  "_comment": "avatar_id 与 REF_FILE 一对一映射配置文件",
+  "map": {
+    "avt_001": "data/tts_refs/yunxia.wav",
+    "avt_002": "data/tts_refs/female_cn.wav",
+    "avt_tencent_zh": "101001",
+    "avt_xtts_en": "en_speaker_1",
+    "avt_gptsovits": "data/tts_refs/sovits_ref.wav"
+  }
+}

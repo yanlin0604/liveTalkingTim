@@ -634,6 +634,130 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
     app.router.add_put('/barrage_config', put_barrage_cfg)
     app.router.add_post('/barrage_config/reset', reset_barrage_cfg)
     
+    # ===== avatar_id 与 REF_FILE 映射配置 CRUD =====
+    avatar_ref_file = base_conf / 'avatar_ref_config.json'
+    # 配置文件位于 config/avatar_ref_config.json，结构如下：
+    # {
+    #   "_comment": "avatar_id 与 REF_FILE 一对一映射配置文件",
+    #   "map": { "<avatar_id>": "<ref_file(字符串)>" }
+    # }
+
+    async def list_avatar_refs(request: web.Request):
+        """
+        列出全部 avatar_id -> REF_FILE 映射
+        - 方法: GET /avatar_ref
+        - 响应: {"code":0,"msg":"ok","data":{"map":{ "<avatar_id>":"<ref_file>" }}}
+        """
+        ok, res = await read_json_file(avatar_ref_file)
+        if not ok:
+            # 文件不存在或读取失败时，返回空集合
+            return api_ok({"map": {}})
+        return api_ok({"map": (res or {}).get('map', {})})
+
+    async def create_avatar_ref(request: web.Request):
+        """
+        新增映射
+        - 方法: POST /avatar_ref
+        - 请求体: {"avatar_id":"string","ref_file":"string"}
+        - 冲突: 若 avatar_id 已存在，返回错误
+        - 响应: {"code":0,"msg":"ok","data":{"created":true,"avatar_id":"...","ref_file":"..."}}
+        """
+        try:
+            data = await request.json()
+        except Exception as e:
+            return api_err(f"JSON解析失败: {e}")
+        if not isinstance(data, dict):
+            return api_err("请求体必须为对象(JSON)")
+        avatar_id = data.get('avatar_id')
+        ref_file = data.get('ref_file')
+        if not avatar_id or not isinstance(avatar_id, str):
+            return api_err("缺少或非法的 avatar_id，应为非空字符串")
+        if not ref_file or not isinstance(ref_file, str):
+            return api_err("缺少或非法的 ref_file，应为非空字符串")
+
+        ok, res = await read_json_file(avatar_ref_file)
+        if not ok:
+            res = {"_comment": "avatar_id 与 REF_FILE 一对一映射配置文件", "map": {}}
+        mapping = res.setdefault('map', {})
+        if avatar_id in mapping:
+            return api_err(f"avatar_id={avatar_id} 已存在，如需修改请使用 PUT /avatar_ref/{{avatar_id}}")
+        mapping[avatar_id] = ref_file
+        ok, err = await write_json_file(avatar_ref_file, res)
+        return api_ok({"created": ok, "avatar_id": avatar_id, "ref_file": ref_file}) if ok else api_err(f"保存失败: {err}")
+
+    async def get_avatar_ref(request: web.Request):
+        """
+        查询单个映射
+        - 方法: GET /avatar_ref/{avatar_id}
+        - 路径参数: avatar_id
+        - 响应: {"code":0,"msg":"ok","data":{"avatar_id":"...","ref_file":"..."}}
+        """
+        avatar_id = request.match_info.get('avatar_id')
+        ok, res = await read_json_file(avatar_ref_file)
+        if not ok:
+            return api_err(f"读取失败: {res}")
+        mapping = (res or {}).get('map', {})
+        if avatar_id not in mapping:
+            return api_err(f"未找到 avatar_id={avatar_id} 的映射")
+        return api_ok({"avatar_id": avatar_id, "ref_file": mapping.get(avatar_id)})
+
+    async def put_avatar_ref(request: web.Request):
+        """
+        更新单个映射
+        - 方法: PUT /avatar_ref/{avatar_id}
+        - 路径参数: avatar_id
+        - 请求体: {"ref_file":"string"}
+        - 响应: {"code":0,"msg":"ok","data":{"saved":true,"avatar_id":"...","ref_file":"..."}}
+        """
+        avatar_id = request.match_info.get('avatar_id')
+        try:
+            data = await request.json()
+        except Exception as e:
+            return api_err(f"JSON解析失败: {e}")
+        ref_file = data.get('ref_file') if isinstance(data, dict) else None
+        if not ref_file or not isinstance(ref_file, str):
+            return api_err("缺少或非法的 ref_file，应为非空字符串")
+        # 读取现有数据（若不存在则初始化默认结构）
+        ok, res = await read_json_file(avatar_ref_file)
+        if not ok:
+            res = {"_comment": "avatar_id 与 REF_FILE 一对一映射配置文件", "map": {}}
+        mapping = res.setdefault('map', {})
+        mapping[avatar_id] = ref_file
+        ok, err = await write_json_file(avatar_ref_file, res)
+        return api_ok({"saved": ok, "avatar_id": avatar_id, "ref_file": ref_file}) if ok else api_err(f"保存失败: {err}")
+
+    async def delete_avatar_ref(request: web.Request):
+        """
+        删除单个映射
+        - 方法: DELETE /avatar_ref/{avatar_id}
+        - 路径参数: avatar_id
+        - 响应: {"code":0,"msg":"ok","data":{"deleted":true,"avatar_id":"..."}}
+        """
+        avatar_id = request.match_info.get('avatar_id')
+        ok, res = await read_json_file(avatar_ref_file)
+        if not ok:
+            return api_err(f"读取失败: {res}")
+        mapping = (res or {}).get('map', {})
+        if avatar_id in mapping:
+            del mapping[avatar_id]
+            # 持久化
+            ok2, err = await write_json_file(avatar_ref_file, res)
+            return api_ok({"deleted": ok2, "avatar_id": avatar_id}) if ok2 else api_err(f"删除失败: {err}")
+        else:
+            return api_err(f"未找到 avatar_id={avatar_id} 的映射")
+
+    # 路由注册（avatar_ref）
+    # - GET    /avatar_ref                 列表
+    # - POST   /avatar_ref                 新增
+    # - GET    /avatar_ref/{avatar_id}     查询单个
+    # - PUT    /avatar_ref/{avatar_id}     更新单个
+    # - DELETE /avatar_ref/{avatar_id}     删除单个
+    app.router.add_get('/avatar_ref', list_avatar_refs)
+    app.router.add_post('/avatar_ref', create_avatar_ref)
+    app.router.add_get('/avatar_ref/{avatar_id}', get_avatar_ref)
+    app.router.add_put('/avatar_ref/{avatar_id}', put_avatar_ref)
+    app.router.add_delete('/avatar_ref/{avatar_id}', delete_avatar_ref)
+    
     # 音频管理接口
     app.router.add_post("/audio/upload", audio_api.upload_file)         # 上传本地音频文件
     app.router.add_post("/audio/upload_url", audio_api.upload_url)      # 通过远程URL保存音频
