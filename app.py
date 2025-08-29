@@ -244,6 +244,9 @@ if __name__ == '__main__':
     parser.add_argument('--customvideo_config', type=str, default='', help="custom action json")
     parser.add_argument('--use_custom_silent', action='store_true', default=True, help="use custom silent action")
     parser.add_argument('--custom_silent_audiotype', type=str, default='', help="custom silent action audiotype")
+    parser.add_argument('--multi_action_mode', type=str, default='single', choices=['single', 'random', 'sequence'], help="multi action mode")
+    parser.add_argument('--multi_action_list', nargs='*', default=[], help="list of audiotypes for multi action mode")
+    parser.add_argument('--multi_action_interval', type=int, default=100, help="frame interval for action switching")
 
     parser.add_argument('--tts', type=str, default='edgetts', help="tts service type") #xtts gpt-sovits cosyvoice
     parser.add_argument('--REF_FILE', type=str, default="zh-CN-XiaoxiaoNeural")

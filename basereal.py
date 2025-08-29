@@ -136,10 +136,21 @@ class BaseReal:
         # 从配置文件读取静默时使用的动作类型（可以为空）
         self.custom_silent_audiotype = getattr(opt, 'custom_silent_audiotype', "")
         
+        # 多动作编排配置
+        self.multi_action_mode = getattr(opt, 'multi_action_mode', 'single')  # single/random/sequence
+        self.multi_action_list = getattr(opt, 'multi_action_list', [])  # 动作列表
+        self.multi_action_interval = getattr(opt, 'multi_action_interval', 0)  # 动作切换间隔（帧数）
+        self.current_action_index = 0  # 当前动作索引（用于sequence模式）
+        self.action_switch_counter = 0  # 动作切换计数器
+        self.current_silent_audiotype = None  # 当前使用的静默动作类型
+        
         # 记录静默自定义动作配置
         logger.info("=== 静默自定义动作配置 ===")
         logger.info(f"静默自定义动作开关: {'开启' if self.use_custom_silent else '关闭'}")
         logger.info(f"指定静默动作类型: {self.custom_silent_audiotype or '未指定'}")
+        logger.info(f"多动作模式: {self.multi_action_mode}")
+        logger.info(f"多动作列表: {self.multi_action_list}")
+        logger.info(f"动作切换间隔: {self.multi_action_interval}帧")
         logger.info(f"可用自定义动作配置数量: {len(opt.customopt) if hasattr(opt, 'customopt') and opt.customopt else 0}")
         
         # 读取推流质量配置
@@ -201,78 +212,79 @@ class BaseReal:
         """加载自定义动作配置"""
         logger.info("=== 开始加载自定义动作配置 ===")
         logger.info(f"静默自定义动作开关: {'开启' if self.use_custom_silent else '关闭'}")
-        logger.info(f"指定静默动作类型: {self.custom_silent_audiotype or '未指定'}")
+        logger.info(f"多动作模式: {self.multi_action_mode}")
+        logger.info(f"多动作列表: {self.multi_action_list}")
         logger.info(f"可用自定义动作数量: {len(self.opt.customopt) if self.opt.customopt else 0}")
         
-        # 如果开启了静默自定义动作，只加载指定的动作
+        # 如果开启了静默自定义动作
         if self.use_custom_silent:
-            logger.info("静默自定义动作已开启，开始加载指定动作")
+            logger.info("静默自定义动作已开启，开始加载动作")
             
-            # 如果指定了具体的动作类型，只加载该动作
-            if self.custom_silent_audiotype:
-                target_audiotype = self.custom_silent_audiotype
-                logger.info(f"查找指定的静默动作类型: {target_audiotype}")
+            # 根据多动作模式决定要加载的动作
+            actions_to_load = []
+            
+            if self.multi_action_mode in ['random', 'sequence'] and self.multi_action_list:
+                # 多动作模式：加载指定的多个动作
+                logger.info(f"多动作模式({self.multi_action_mode})，加载动作列表: {self.multi_action_list}")
+                actions_to_load = self.multi_action_list
+            elif self.custom_silent_audiotype:
+                # 单动作模式：加载指定的单个动作
+                logger.info(f"单动作模式，加载指定动作: {self.custom_silent_audiotype}")
+                actions_to_load = [self.custom_silent_audiotype]
+            else:
+                # 默认加载第一个可用动作
+                if self.opt.customopt:
+                    first_action = self.opt.customopt[0].get('audiotype')
+                    logger.info(f"未指定动作，加载第一个可用动作: {first_action}")
+                    actions_to_load = [first_action]
+            
+            # 加载所有需要的动作
+            loaded_count = 0
+            for target_audiotype in actions_to_load:
+                logger.info(f"正在加载动作: {target_audiotype}")
                 
                 for item in self.opt.customopt:
-                    logger.debug(f"检查动作配置: audiotype={item.get('audiotype')}, imgpath={item.get('imgpath')}, audiopath={item.get('audiopath')}")
                     if item['audiotype'] == target_audiotype:
-                        logger.info(f"找到匹配的指定静默动作: {item}")
+                        logger.info(f"找到匹配的动作配置: {item}")
                         
-                        # 加载图像文件
-                        input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
-                        input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-                        logger.info(f"找到图像文件数量: {len(input_img_list)}")
-                        logger.debug(f"图像文件列表: {input_img_list[:3]}...")  # 只显示前3个
-                        
-                        audiotype = item['audiotype']
-                        self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
-                        logger.info(f"成功加载图像帧数: {len(self.custom_img_cycle[audiotype])}")
-                        
-                        # 加载音频文件
-                        self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
-                        logger.info(f"成功加载音频文件: 采样率={sample_rate}Hz, 时长={len(self.custom_audio_cycle[audiotype])/sample_rate:.2f}秒")
-                        
-                        # 初始化索引
-                        self.custom_audio_index[audiotype] = 0
-                        self.custom_index[audiotype] = 0
-                        self.custom_opt[audiotype] = item
-                        
-                        logger.info(f"✅ 成功加载指定静默动作 audiotype={audiotype}")
-                        logger.info(f"当前已加载的自定义动作: {list(self.custom_index.keys())}")
-                        return
-                
-                logger.warning(f"❌ 未找到指定的静默动作 audiotype={target_audiotype}")
-                logger.warning(f"可用的动作类型: {[item.get('audiotype') for item in self.opt.customopt]}")
+                        try:
+                            # 加载图像文件
+                            input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
+                            input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+                            logger.info(f"找到图像文件数量: {len(input_img_list)}")
+                            
+                            audiotype = item['audiotype']
+                            self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
+                            logger.info(f"成功加载图像帧数: {len(self.custom_img_cycle[audiotype])}")
+                            
+                            # 加载音频文件
+                            self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
+                            logger.info(f"成功加载音频文件: 采样率={sample_rate}Hz, 时长={len(self.custom_audio_cycle[audiotype])/sample_rate:.2f}秒")
+                            
+                            # 初始化索引
+                            self.custom_audio_index[audiotype] = 0
+                            self.custom_index[audiotype] = 0
+                            self.custom_opt[audiotype] = item
+                            
+                            loaded_count += 1
+                            logger.info(f"✅ 成功加载动作 audiotype={audiotype}")
+                            break
+                        except Exception as e:
+                            logger.error(f"加载动作 {target_audiotype} 失败: {e}")
+                else:
+                    logger.warning(f"❌ 未找到动作 audiotype={target_audiotype}")
             
-            # 如果没有指定动作类型，加载第一个可用动作
-            if self.opt.customopt:
-                item = self.opt.customopt[0]
-                logger.info(f"未指定动作类型，加载第一个可用静默动作: {item}")
-                
-                # 加载图像文件
-                input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
-                input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-                logger.info(f"找到图像文件数量: {len(input_img_list)}")
-                logger.debug(f"图像文件列表: {input_img_list[:3]}...")  # 只显示前3个
-                
-                audiotype = item['audiotype']
-                self.custom_img_cycle[audiotype] = read_imgs(input_img_list)
-                logger.info(f"成功加载图像帧数: {len(self.custom_img_cycle[audiotype])}")
-                
-                # 加载音频文件
-                self.custom_audio_cycle[audiotype], sample_rate = sf.read(item['audiopath'], dtype='float32')
-                logger.info(f"成功加载音频文件: 采样率={sample_rate}Hz, 时长={len(self.custom_audio_cycle[audiotype])/sample_rate:.2f}秒")
-                
-                # 初始化索引
-                self.custom_audio_index[audiotype] = 0
-                self.custom_index[audiotype] = 0
-                self.custom_opt[audiotype] = item
-                
-                logger.info(f"✅ 成功加载第一个可用静默动作 audiotype={audiotype}")
-                logger.info(f"当前已加载的自定义动作: {list(self.custom_index.keys())}")
-                return
-            else:
-                logger.warning("❌ 没有可用的自定义动作配置")
+            logger.info(f"成功加载 {loaded_count}/{len(actions_to_load)} 个动作")
+            logger.info(f"当前已加载的自定义动作: {list(self.custom_index.keys())}")
+            
+            # 初始化第一个动作
+            if self.custom_index:
+                if self.multi_action_mode == 'random':
+                    import random
+                    self.current_silent_audiotype = random.choice(list(self.custom_index.keys()))
+                else:
+                    self.current_silent_audiotype = list(self.custom_index.keys())[0]
+                logger.info(f"初始动作设置为: {self.current_silent_audiotype}")
         else:
             logger.info("静默自定义动作未开启，跳过自定义动作加载")
         
@@ -485,19 +497,51 @@ class BaseReal:
         logger.info(f"✅ 自定义动作状态设置完成: audiotype={audiotype}")
 
     def get_default_silent_audiotype(self):
-        """获取静音时的默认动作类型"""
+        """获取静音时的默认动作类型（支持多动作编排）"""
         logger.debug(f"获取默认静默动作类型 - 开关状态: {self.use_custom_silent}, 可用动作: {list(self.custom_index.keys()) if self.custom_index else '无'}")
         
         # 如果开关开启，查找可用的自定义动作
         if self.use_custom_silent and self.custom_index:
-            # 如果指定了具体的动作类型，优先使用指定的
-            if self.custom_silent_audiotype and self.custom_silent_audiotype in self.custom_index:
-                logger.debug(f"使用指定的静默动作类型: {self.custom_silent_audiotype}")
-                return self.custom_silent_audiotype
-            # 否则返回第一个可用的audiotype
-            default_audiotype = list(self.custom_index.keys())[0]
-            logger.debug(f"使用第一个可用静默动作类型: {default_audiotype}")
-            return default_audiotype
+            # 多动作编排模式
+            if self.multi_action_mode == 'random' and len(self.custom_index) > 1:
+                # 随机模式：每次切换动作时随机选择
+                if self.action_switch_counter >= self.multi_action_interval:
+                    import random
+                    available_actions = list(self.custom_index.keys())
+                    # 避免重复选择同一个动作
+                    if self.current_silent_audiotype in available_actions and len(available_actions) > 1:
+                        available_actions.remove(self.current_silent_audiotype)
+                    self.current_silent_audiotype = random.choice(available_actions)
+                    self.action_switch_counter = 0
+                    logger.info(f"🎲 随机切换到动作: {self.current_silent_audiotype}")
+                else:
+                    self.action_switch_counter += 1
+                return self.current_silent_audiotype
+                
+            elif self.multi_action_mode == 'sequence' and len(self.custom_index) > 1:
+                # 顺序模式：按指定顺序循环播放
+                if self.action_switch_counter >= self.multi_action_interval:
+                    available_actions = list(self.custom_index.keys())
+                    self.current_action_index = (self.current_action_index + 1) % len(available_actions)
+                    self.current_silent_audiotype = available_actions[self.current_action_index]
+                    self.action_switch_counter = 0
+                    logger.info(f"📝 顺序切换到动作: {self.current_silent_audiotype} (索引: {self.current_action_index})")
+                else:
+                    self.action_switch_counter += 1
+                return self.current_silent_audiotype
+                
+            else:
+                # 单动作模式或只有一个动作
+                if self.current_silent_audiotype and self.current_silent_audiotype in self.custom_index:
+                    return self.current_silent_audiotype
+                elif self.custom_silent_audiotype and self.custom_silent_audiotype in self.custom_index:
+                    logger.debug(f"使用指定的静默动作类型: {self.custom_silent_audiotype}")
+                    return self.custom_silent_audiotype
+                else:
+                    # 返回第一个可用的audiotype
+                    default_audiotype = list(self.custom_index.keys())[0]
+                    logger.debug(f"使用第一个可用静默动作类型: {default_audiotype}")
+                    return default_audiotype
         
         # 否则返回1（静音状态）
         logger.debug("使用默认静音状态 (audiotype=1)")
