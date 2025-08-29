@@ -695,11 +695,11 @@ class BaseReal:
             if self.enable_quality_monitoring and frame_count % quality_check_interval == 0:
                 if video_track:
                     queue_size = video_track._queue.qsize()
-                    logger.info(f"实时推流质量监控 - 队列大小: {queue_size}, 帧计数: {frame_count}, 目标帧率: {target_fps}fps")
+                    # logger.info(f"实时推流质量监控 - 队列大小: {queue_size}, 帧计数: {frame_count}, 目标帧率: {target_fps}fps")
                     
                     # 队列过小时可能存在处理延迟
-                    if queue_size < min_video_queue_size:
-                        logger.warning("视频队列过小，可能存在处理延迟")
+                    # if queue_size < min_video_queue_size:
+                    #     logger.warning("视频队列过小，可能存在处理延迟")
 
             cv2.putText(combine_frame, "UNIMED", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (128,128,128), 1)
             if self.opt.transport=='virtualcam':
