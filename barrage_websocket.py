@@ -378,16 +378,42 @@ async def scheduler_loop(http_session: aiohttp.ClientSession, config: Dict[str, 
     """内置调度：自动播报与冷场填充。
     修复：不使用 time % interval 方式，避免错过触发；增加详尽日志；冷场消息随机选择与防抖。
     """
-    auto_cfg = (SCHEDULE_CFG.get('auto_broadcast') or {})
-    idle_cfg = (SCHEDULE_CFG.get('idle_fill') or {})
     auto_idx = 0
     last_auto_ts = time.time()  # 上次自动播报时间
     last_idle_sent_ts = 0.0     # 上次冷场填充发送时间
+    # 记录上一次的自动播报开关与间隔，用于热更新后防抖
+    prev_auto_enabled: Optional[bool] = None
+    current_interval: Optional[int] = None
 
     while True:
         await asyncio.sleep(1)
         try:
             now = time.time()
+
+            # 每次循环使用最新的调度配置（由 _config_watcher_loop 热更新 SCHEDULE_CFG）
+            auto_cfg = (SCHEDULE_CFG.get('auto_broadcast') or {})
+            idle_cfg = (SCHEDULE_CFG.get('idle_fill') or {})
+
+            logging.info(
+                f"[调度任务] 当前时间: {now}, 是否启用自动播报: {auto_cfg.get('enabled')}, 是否启用冷场填充: {idle_cfg.get('enabled')}"
+            )
+
+            # 处理自动播报开关/间隔的变更：
+            # - 首次赋值或从关闭->开启：重置 last_auto_ts，避免立刻触发
+            # - 间隔改变：重置 last_auto_ts，按照新间隔重新计时
+            enabled_now = bool(auto_cfg.get('enabled')) if auto_cfg else False
+            interval_now = int((auto_cfg.get('interval_sec', 0) or 0)) if auto_cfg else 0
+            if prev_auto_enabled is None:
+                prev_auto_enabled = enabled_now
+                current_interval = interval_now
+                # 首次进入，无需调整 last_auto_ts（已在启动时设置为 now）
+            else:
+                if enabled_now and prev_auto_enabled is False:
+                    last_auto_ts = now
+                if interval_now != (current_interval or 0):
+                    current_interval = interval_now
+                    last_auto_ts = now
+                prev_auto_enabled = enabled_now
 
             # 自动播报
             if auto_cfg.get('enabled') and (auto_cfg.get('messages')):
