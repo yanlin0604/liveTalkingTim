@@ -209,12 +209,14 @@ class ConfigAPI:
                 multi_action_mode = config_data.get('multi_action_mode', 'single')
                 multi_action_list = config_data.get('multi_action_list', [])
                 multi_action_interval = config_data.get('multi_action_interval', 100)
+                multi_action_switch_policy = config_data.get('multi_action_switch_policy', 'interval')
             else:
                 use_custom_silent = True  # 默认值
                 custom_silent_audiotype = ""  # 默认值
                 multi_action_mode = 'single'  # 默认值
                 multi_action_list = []  # 默认值
                 multi_action_interval = 100  # 默认值
+                multi_action_switch_policy = 'interval'  # 默认值
             
             return web.Response(
                 content_type="application/json",
@@ -225,7 +227,8 @@ class ConfigAPI:
                         "custom_silent_audiotype": custom_silent_audiotype,
                         "multi_action_mode": multi_action_mode,
                         "multi_action_list": multi_action_list,
-                        "multi_action_interval": multi_action_interval
+                        "multi_action_interval": multi_action_interval,
+                        "multi_action_switch_policy": multi_action_switch_policy
                     }
                 }),
             )

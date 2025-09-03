@@ -247,6 +247,7 @@ if __name__ == '__main__':
     parser.add_argument('--multi_action_mode', type=str, default='single', choices=['single', 'random', 'sequence'], help="multi action mode")
     parser.add_argument('--multi_action_list', nargs='*', default=[], help="list of audiotypes for multi action mode")
     parser.add_argument('--multi_action_interval', type=int, default=100, help="frame interval for action switching")
+    parser.add_argument('--multi_action_switch_policy', type=str, default='interval', choices=['interval', 'on_complete'], help="multi action switch policy: interval or on_complete")
 
     parser.add_argument('--tts', type=str, default='edgetts', help="tts service type") #xtts gpt-sovits cosyvoice
     parser.add_argument('--REF_FILE', type=str, default="zh-CN-XiaoxiaoNeural")

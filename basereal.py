@@ -140,6 +140,8 @@ class BaseReal:
         self.multi_action_mode = getattr(opt, 'multi_action_mode', 'single')  # single/random/sequence
         self.multi_action_list = getattr(opt, 'multi_action_list', [])  # 动作列表
         self.multi_action_interval = getattr(opt, 'multi_action_interval', 0)  # 动作切换间隔（帧数）
+        # 新增：动作切换策略（interval=按帧间隔；on_complete=播放完整循环后切换）
+        self.multi_action_switch_policy = getattr(opt, 'multi_action_switch_policy', 'interval')
         self.current_action_index = 0  # 当前动作索引（用于sequence模式）
         self.action_switch_counter = 0  # 动作切换计数器
         self.current_silent_audiotype = None  # 当前使用的静默动作类型
@@ -151,6 +153,7 @@ class BaseReal:
         logger.info(f"多动作模式: {self.multi_action_mode}")
         logger.info(f"多动作列表: {self.multi_action_list}")
         logger.info(f"动作切换间隔: {self.multi_action_interval}帧")
+        logger.info(f"动作切换策略: {self.multi_action_switch_policy}")
         logger.info(f"可用自定义动作配置数量: {len(opt.customopt) if hasattr(opt, 'customopt') and opt.customopt else 0}")
         
         # 读取推流质量配置
@@ -493,55 +496,77 @@ class BaseReal:
             logger.info(f"重置索引 audiotype={audiotype}: 音频{old_audio_index}→0, 视频{old_video_index}→0")
         else:
             logger.debug(f"保持当前索引 audiotype={audiotype}: 音频={self.custom_audio_index[audiotype]}, 视频={self.custom_index[audiotype]}")
-        
-        logger.info(f"✅ 自定义动作状态设置完成: audiotype={audiotype}")
-
     def get_default_silent_audiotype(self):
         """获取静音时的默认动作类型（支持多动作编排）"""
         logger.debug(f"获取默认静默动作类型 - 开关状态: {self.use_custom_silent}, 可用动作: {list(self.custom_index.keys()) if self.custom_index else '无'}")
         
         # 如果开关开启，查找可用的自定义动作
         if self.use_custom_silent and self.custom_index:
-            # 多动作编排模式
-            if self.multi_action_mode == 'random' and len(self.custom_index) > 1:
-                # 随机模式：每次切换动作时随机选择
-                if self.action_switch_counter >= self.multi_action_interval:
-                    import random
-                    available_actions = list(self.custom_index.keys())
-                    # 避免重复选择同一个动作
-                    if self.current_silent_audiotype in available_actions and len(available_actions) > 1:
-                        available_actions.remove(self.current_silent_audiotype)
-                    self.current_silent_audiotype = random.choice(available_actions)
-                    self.action_switch_counter = 0
-                    logger.info(f"🎲 随机切换到动作: {self.current_silent_audiotype}")
-                else:
-                    self.action_switch_counter += 1
-                return self.current_silent_audiotype
+            # 多动作编排：random / sequence
+            if self.multi_action_mode in ('random', 'sequence') and len(self.custom_index) > 1:
+                policy = getattr(self, 'multi_action_switch_policy', 'interval')
                 
-            elif self.multi_action_mode == 'sequence' and len(self.custom_index) > 1:
-                # 顺序模式：按指定顺序循环播放
-                if self.action_switch_counter >= self.multi_action_interval:
-                    available_actions = list(self.custom_index.keys())
-                    self.current_action_index = (self.current_action_index + 1) % len(available_actions)
-                    self.current_silent_audiotype = available_actions[self.current_action_index]
-                    self.action_switch_counter = 0
-                    logger.info(f"📝 顺序切换到动作: {self.current_silent_audiotype} (索引: {self.current_action_index})")
-                else:
-                    self.action_switch_counter += 1
-                return self.current_silent_audiotype
-                
-            else:
-                # 单动作模式或只有一个动作
-                if self.current_silent_audiotype and self.current_silent_audiotype in self.custom_index:
+                # 初始化当前动作
+                if not self.current_silent_audiotype:
+                    self.current_silent_audiotype = list(self.custom_index.keys())[0]
+                    logger.debug(f"初始化当前静默动作: {self.current_silent_audiotype}")
                     return self.current_silent_audiotype
-                elif self.custom_silent_audiotype and self.custom_silent_audiotype in self.custom_index:
-                    logger.debug(f"使用指定的静默动作类型: {self.custom_silent_audiotype}")
-                    return self.custom_silent_audiotype
+                
+                if policy == 'on_complete':
+                    # 完整循环后切换：当 index % size == 0 且 index>0 视为完成一轮
+                    cur = self.current_silent_audiotype
+                    if cur in self.custom_img_cycle and cur in self.custom_index:
+                        size = len(self.custom_img_cycle[cur])
+                        idx = self.custom_index[cur]
+                        if size > 0 and idx > 0 and (idx % size == 0):
+                            if self.multi_action_mode == 'random':
+                                import random
+                                candidates = list(self.custom_index.keys())
+                                if cur in candidates and len(candidates) > 1:
+                                    candidates.remove(cur)
+                                self.current_silent_audiotype = random.choice(candidates)
+                                logger.info(f"🎲[on_complete] 随机切换到动作: {self.current_silent_audiotype}")
+                            else:
+                                seq = list(self.custom_index.keys())
+                                self.current_action_index = (self.current_action_index + 1) % len(seq)
+                                self.current_silent_audiotype = seq[self.current_action_index]
+                                logger.info(f"📝[on_complete] 顺序切换到动作: {self.current_silent_audiotype} (索引: {self.current_action_index})")
+                    return self.current_silent_audiotype
                 else:
-                    # 返回第一个可用的audiotype
-                    default_audiotype = list(self.custom_index.keys())[0]
-                    logger.debug(f"使用第一个可用静默动作类型: {default_audiotype}")
-                    return default_audiotype
+                    # interval 策略（按帧间隔）
+                    if self.multi_action_mode == 'random':
+                        if self.action_switch_counter >= self.multi_action_interval:
+                            import random
+                            candidates = list(self.custom_index.keys())
+                            if self.current_silent_audiotype in candidates and len(candidates) > 1:
+                                candidates.remove(self.current_silent_audiotype)
+                            self.current_silent_audiotype = random.choice(candidates)
+                            self.action_switch_counter = 0
+                            logger.info(f"🎲 随机切换到动作: {self.current_silent_audiotype}")
+                        else:
+                            self.action_switch_counter += 1
+                        return self.current_silent_audiotype
+                    else:
+                        if self.action_switch_counter >= self.multi_action_interval:
+                            seq = list(self.custom_index.keys())
+                            self.current_action_index = (self.current_action_index + 1) % len(seq)
+                            self.current_silent_audiotype = seq[self.current_action_index]
+                            self.action_switch_counter = 0
+                            logger.info(f"📝 顺序切换到动作: {self.current_silent_audiotype} (索引: {self.current_action_index})")
+                        else:
+                            self.action_switch_counter += 1
+                        return self.current_silent_audiotype
+            
+            # 单动作模式或只有一个动作
+            if self.current_silent_audiotype and self.current_silent_audiotype in self.custom_index:
+                return self.current_silent_audiotype
+            elif self.custom_silent_audiotype and self.custom_silent_audiotype in self.custom_index:
+                logger.debug(f"使用指定的静默动作类型: {self.custom_silent_audiotype}")
+                return self.custom_silent_audiotype
+            else:
+                default_audiotype = list(self.custom_index.keys())[0]
+                logger.debug(f"使用第一个可用静默动作类型: {default_audiotype}")
+                return default_audiotype
         
         # 否则返回1（静音状态）
         logger.debug("使用默认静音状态 (audiotype=1)")

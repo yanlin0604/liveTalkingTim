@@ -2,30 +2,14 @@ import argparse
 import asyncio
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import time
 import random
-from asyncio import Event
-from contextlib import asynccontextmanager
-from datetime import timedelta
-from typing import AsyncGenerator, Tuple, Dict, Any, Optional
+from typing import Dict, Any, Optional
 import re
 
 import aiohttp
-from reactivestreams.subscriber import Subscriber
-from reactivestreams.subscription import Subscription
-from rsocket.helpers import single_transport_provider
-from rsocket.payload import Payload
-from rsocket.rsocket_client import RSocketClient
-from rsocket.streams.stream_from_async_generator import StreamFromAsyncGenerator
-from rsocket.transports.aiohttp_websocket import TransportAioHttpClient
-
-subscribe_payload_json = {
-    "data": {
-        "taskIds": [],
-        "cmd": "SUBSCRIBE"
-    }
-}
 
 
 # ========================= 配置与模板工具函数 ========================= #
@@ -881,275 +865,80 @@ def get_type_cfg(cfg: Dict[str, Any], msg_type: str) -> Dict[str, Any]:
     return (cfg.get('types') or {}).get(msg_type, {})
 
 
-class ChannelSubscriber(Subscriber):
-    def __init__(self, wait_for_responder_complete: Event, http_session: aiohttp.ClientSession,
-                 human_url: str, config: Dict[str, Any]) -> None:
-        super().__init__()
-        self.subscription = None
-        self._wait_for_responder_complete = wait_for_responder_complete
-        self._http_session = http_session
-        self._human_url = human_url
-        self._config = config
-
-    def on_subscribe(self, subscription: Subscription):
-        self.subscription = subscription
-        self.subscription.request(0x7FFFFFFF)
-
-    # TODO 收到消息回调
-    def on_next(self, value: Payload, is_complete=False):
-        try:
-            raw = json.loads(value.data)
-        except Exception as e:
-            logging.warning(f"收到非JSON消息，解析失败: {e}, 数据: {str(value.data)[:200]}")
-            return
-
-        msgs = normalize_incoming(raw)
-        logging.info(f"[RSocket] 收到 {len(msgs)} 条消息")
-        
-        for msg_dto in msgs:
-            if not isinstance(msg_dto, dict):
-                continue
-            msg_type = msg_dto.get('type')
-            room_id = msg_dto.get('roomId', '')
-            msg = msg_dto.get('msg', {}) or {}
-            
-            # 详细的消息接收日志
-            if msg_type == "DANMU":
-                badge_info = f"{msg.get('badgeLevel','')}{msg.get('badgeName','')}" if msg.get('badgeLevel',0) else ''
-                logging.info(
-                    f"[弹幕接收] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
-                    f"徽章:{badge_info} | 内容:{msg.get('content','')} | 平台:{msg.get('platform','')}"
-                )
-            elif msg_type == "GIFT":
-                badge_info = f"{msg.get('badgeLevel','')}{msg.get('badgeName','')}" if msg.get('badgeLevel',0) else ''
-                action = msg.get('action') or '赠送'
-                logging.info(
-                    f"[礼物接收] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
-                    f"徽章:{badge_info} | {action}:{msg.get('giftName','')}x{msg.get('giftCount',1)} | "
-                    f"价值:{msg.get('giftPrice',0)} | 平台:{msg.get('platform','')}"
-                )
-            elif msg_type == "SUPER_CHAT":
-                logging.info(
-                    f"[醒目留言] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
-                    f"内容:{msg.get('content','')} | 价格:{msg.get('price',0)} | 平台:{msg.get('platform','')}"
-                )
-            elif msg_type == "LIVE_STATUS_CHANGE":
-                logging.info(
-                    f"[直播状态] 房间:{room_id} | 状态变更:{msg.get('status','')} | 平台:{msg.get('platform','')}"
-                )
-            elif msg_type == "ENTER_ROOM":
-                logging.info(
-                    f"[进入房间] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | 平台:{msg.get('platform','')}"
-                )
-            elif msg_type == "LIKE":
-                logging.info(
-                    f"[点赞] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | 平台:{msg.get('platform','')}"
-                )
-            elif msg_type == "ROOM_STATS":
-                logging.info(
-                    f"[房间统计] 房间:{room_id} | 在线:{msg.get('online','')} | 热度:{msg.get('hot','')} | "
-                    f"点赞:{msg.get('likes','')} | 平台:{msg.get('platform','')}"
-                )
-            else:
-                logging.info(f"[未知消息] 类型:{msg_type} | 房间:{room_id} | 数据:{json.dumps(msg_dto, ensure_ascii=False)[:200]}")
-
-            # 根据配置异步转发到 /human
-            try:
-                asyncio.get_event_loop().create_task(self._maybe_dispatch(msg_dto))
-            except Exception as e:
-                logging.error(f"[调度失败] 消息类型:{msg_type} | 房间:{room_id} | 错误:{e}")
-
-        if is_complete:
-            self._wait_for_responder_complete.set()
-
-    def on_error(self, exception: Exception):
-        logging.error('Error from server on channel' + str(exception))
-        self._wait_for_responder_complete.set()
-
-    def on_complete(self):
-        logging.info('Completed from server on channel')
-        self._wait_for_responder_complete.set()
-
-    async def _maybe_dispatch(self, msg_dto: Dict[str, Any]):
-        msg_type = msg_dto.get('type', '')
-        cfg = get_type_cfg(self._config, msg_type)
-        if not cfg or not cfg.get('enabled', False):
-            logging.info(f"[消息跳过] 类型:{msg_type} | 原因:配置未启用或不存在")
-            return
-
-        ctx = build_context(msg_dto)
-
-        # 基础过滤（长度 / 价格等）
-        if msg_type == 'DANMU':
-            text_raw = str(ctx.get('content', ''))
-            min_len = int(cfg.get('min_length', 0) or 0)
-            max_len = int(cfg.get('max_length', 0) or 0)
-            if min_len and len(text_raw) < min_len:
-                logging.info(f"[弹幕过滤] 用户:{ctx.get('username','')} | 原因:长度不足({len(text_raw)}<{min_len}) | 内容:{text_raw}")
-                return
-            if max_len and len(text_raw) > max_len:
-                # 过长截断（防止刷屏）
-                logging.info(f"[弹幕截断] 用户:{ctx.get('username','')} | 原长度:{len(text_raw)} | 截断至:{max_len}")
-                ctx['content'] = text_raw[:max_len] + '…'
-        elif msg_type == 'GIFT':
-            min_price = float(cfg.get('min_gift_price', 0) or 0)
-            price = 0.0
-            try:
-                price = float(ctx.get('giftPrice') or 0)
-            except Exception:
-                price = 0.0
-            if price < min_price:
-                logging.info(f"[礼物过滤] 用户:{ctx.get('username','')} | 原因:价格不足({price}<{min_price}) | 礼物:{ctx.get('giftName','')}")
-                return
-        elif msg_type == 'SUPER_CHAT':
-            min_price = float(cfg.get('min_price', 0) or 0)
-            price = 0.0
-            try:
-                price = float(ctx.get('price') or 0)
-            except Exception:
-                price = 0.0
-            if price < min_price:
-                logging.info(f"[醒目留言过滤] 用户:{ctx.get('username','')} | 原因:价格不足({price}<{min_price})")
-                return
-
-        # 对于弹幕消息，先判断是否应该回复
-        if msg_type == 'DANMU':
-            if not should_reply_to_danmu(ctx, self._config):
-                return
-
-        # DANMU 文本与动作策略：命中 reply_rules -> 模板回复；否则 -> chat 大模型
-        action = str(cfg.get('action', 'echo'))
-        content = str(ctx.get('content', '') or '')
-        if msg_type == 'DANMU':
-            tpl = match_reply_template(msg_type, ctx)
-            if tpl:
-                # 命中规则，使用模板渲染；动作使用配置默认（通常为 echo）
-                text = render_template(tpl, ctx)
-                action = str(cfg.get('action', 'echo'))
-                logging.info(f"[话术命中] 使用模板回复 | 模板:{tpl} | 内容:{content[:50]}")
-            else:
-                # 未命中规则，切换为 chat 并把原文交给大模型
-                action = 'chat'
-                text = content
-                logging.info(f"[话术未命中] 切换 chat 智能回复 | 内容:{content[:50]}")
-        else:
-            # 非 DANMU 沿用原逻辑：模板优先 -> 默认模板
-            tpl = match_reply_template(msg_type, ctx)
-            if not tpl:
-                tpl = cfg.get('template', '')
-            text = render_template(tpl, ctx) if tpl else content
-        text = str(text).strip()
-        if not text:
-            return
-
-        # 全局弹幕规则（长度与限流）
-        # 优先使用最新的全局配置（BARRAGE_CFG），否则回退到实例加载的配置
-        runtime_cfg = BARRAGE_CFG if BARRAGE_CFG else self._config
-        if not check_barrage_global(text, runtime_cfg):
-            logging.info(f"[全局过滤] 用户:{ctx.get('username','')} | 原因:违反全局规则 | 文本:{text[:30]}")
-            return
-
-        # 敏感词过滤
-        original_text = text
-        text = apply_sensitive_filter(text)
-        if text is None:
-            logging.info(f"[敏感词拦截] 用户:{ctx.get('username','')} | 原文本:{original_text[:50]}")
-            return
-        elif text != original_text:
-            logging.info(f"[敏感词替换] 用户:{ctx.get('username','')} | 原文:{original_text[:30]} | 替换后:{text[:30]}")
-
-        # 目标 sessionid 与是否打断
-        sessionid = (self._config.get('sessions') or {}).get(msg_type, self._config.get('default_sessionid', 0))
-        interrupt = bool(cfg.get('interrupt', False))
-
-        payload = {
-            "text": text,
-            "type": action,
-            "interrupt": interrupt,
-            "sessionid": sessionid
-        }
-
-        # 发送到 /human
+def _log_message_details(msg_dto: Dict[str, Any]):
+    """记录消息详细信息的统一方法"""
+    msg_type = msg_dto.get('type')
+    room_id = msg_dto.get('roomId', '')
+    msg = msg_dto.get('msg', {}) or {}
+    
+    # 详细的消息接收日志
+    if msg_type == "DANMU":
+        badge_info = f"{msg.get('badgeLevel','')}{msg.get('badgeName','')}" if msg.get('badgeLevel',0) else ''
         logging.info(
-            f"[/human请求] 类型:{msg_type} | 用户:{ctx.get('username','')} | "
-            f"会话ID:{sessionid} | 打断:{interrupt} | 动作:{payload.get('type','')} | "
-            f"文本:{text[:50]}{'...' if len(text) > 50 else ''}"
+            f"[弹幕接收] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
+            f"徽章:{badge_info} | 内容:{msg.get('content','')} | 平台:{msg.get('platform','')}"
         )
-        
+    elif msg_type == "GIFT":
+        badge_info = f"{msg.get('badgeLevel','')}{msg.get('badgeName','')}" if msg.get('badgeLevel',0) else ''
+        action = msg.get('action') or '赠送'
+        logging.info(
+            f"[礼物接收] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
+            f"徽章:{badge_info} | {action}:{msg.get('giftName','')}x{msg.get('giftCount',1)} | "
+            f"价值:{msg.get('giftPrice',0)} | 平台:{msg.get('platform','')}"
+        )
+    elif msg_type == "SUPER_CHAT":
+        logging.info(
+            f"[醒目留言] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | "
+            f"内容:{msg.get('content','')} | 价格:{msg.get('price',0)} | 平台:{msg.get('platform','')}"
+        )
+    elif msg_type == "LIVE_STATUS_CHANGE":
+        logging.info(
+            f"[直播状态] 房间:{room_id} | 状态变更:{msg.get('status','')} | 平台:{msg.get('platform','')}"
+        )
+    elif msg_type == "ENTER_ROOM":
+        logging.info(
+            f"[进入房间] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | 平台:{msg.get('platform','')}"
+        )
+    elif msg_type == "LIKE":
+        logging.info(
+            f"[点赞] 房间:{room_id} | 用户:{msg.get('username','')}({msg.get('uid','')}) | 平台:{msg.get('platform','')}"
+        )
+    elif msg_type == "ROOM_STATS":
+        logging.info(
+            f"[房间统计] 房间:{room_id} | 在线:{msg.get('online','')} | 热度:{msg.get('hot','')} | "
+            f"点赞:{msg.get('likes','')} | 平台:{msg.get('platform','')}"
+        )
+    else:
+        logging.info(f"[未知消息] 类型:{msg_type} | 房间:{room_id} | 数据:{json.dumps(msg_dto, ensure_ascii=False)[:200]}")
+
+def _decode_binary_data(data: bytes) -> Optional[str]:
+    """尝试多种编码格式解码二进制数据"""
+    # 支持的编码格式列表，按优先级排序
+    encodings = ['utf-8', 'gbk', 'gb2312', 'latin-1', 'ascii']
+    
+    for encoding in encodings:
         try:
-            async with self._http_session.post(self._human_url, json=payload, timeout=10) as resp:
-                response_text = await resp.text()
-                if resp.status != 200:
-                    logging.error(
-                        f"[/human错误] 状态码:{resp.status} | 响应:{response_text} | "
-                        f"请求:{json.dumps(payload, ensure_ascii=False)}"
-                    )
-                else:
-                    try:
-                        response_json = json.loads(response_text)
-                        logging.info(
-                            f"[/human成功] 代码:{response_json.get('code','')} | "
-                            f"消息:{response_json.get('msg','')} | 会话ID:{sessionid}"
-                        )
-                    except json.JSONDecodeError:
-                        logging.info(f"[/human成功] 响应:{response_text} | 会话ID:{sessionid}")
-            update_activity()
-        except asyncio.TimeoutError:
-            logging.error(f"[/human超时] 请求超时(10秒) | 会话ID:{sessionid} | 文本:{text[:30]}")
+            decoded_text = data.decode(encoding, errors='strict')
+            logging.debug(f"[解码成功] 使用编码: {encoding}, 数据长度: {len(decoded_text)}")
+            return decoded_text
+        except UnicodeDecodeError:
+            continue
         except Exception as e:
-            logging.error(f"[/human异常] 网络错误:{e} | 会话ID:{sessionid} | 文本:{text[:30]}")
-
-
-@asynccontextmanager
-async def connect(websocket_uri):
-    """
-    创建一个Client，建立连接并return
-    """
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect(websocket_uri) as websocket:
-            async with RSocketClient(
-                    single_transport_provider(TransportAioHttpClient(websocket=websocket)),
-                    keep_alive_period=timedelta(seconds=30),
-                    max_lifetime_period=timedelta(days=1)
-            ) as client:
-                yield client
-
+            logging.debug(f"[解码失败] 编码 {encoding} 出现异常: {e}")
+            continue
+    
+    # 如果所有编码都失败，尝试使用 UTF-8 忽略错误
+    try:
+        decoded_text = data.decode('utf-8', errors='ignore')
+        logging.warning(f"[解码降级] 使用UTF-8忽略错误模式，原始长度: {len(data)}, 解码长度: {len(decoded_text)}")
+        return decoded_text
+    except Exception as e:
+        logging.error(f"[解码完全失败] 无法解码二进制数据: {e}")
+        return None
 
 async def main(websocket_uri: str, human_url: str, config_path: Optional[str]):
-    # 兼容两种模式：普通 WebSocket 推送（默认）与 RSocket
-    mode = globals().get('_RUN_MODE', 'ws')
-    if mode == 'ws':
-        await ws_listen(websocket_uri, human_url, config_path)
-        return
-
-    # ===== RSocket 模式 =====
-    cfg = load_config(config_path)
-    load_external_configs()
-    if human_url:
-        cfg['human_url'] = human_url
-
-    async with aiohttp.ClientSession() as http_session:
-        # 启动调度任务
-        update_activity()  # 启动静默，避免立即判定冷场
-        asyncio.create_task(scheduler_loop(http_session, cfg))
-        # 启动配置热加载
-        asyncio.create_task(_config_watcher_loop())
-        
-        # 发送启动问候语
-        await _send_startup_greeting(http_session, cfg)
-        async with connect(websocket_uri) as client:
-            channel_completion_event = Event()
-
-            async def generator() -> AsyncGenerator[Tuple[Payload, bool], None]:
-                yield Payload(
-                    data=json.dumps(subscribe_payload_json["data"]).encode()
-                ), False
-                await Event().wait()
-
-            stream = StreamFromAsyncGenerator(generator)
-            requested = client.request_channel(Payload(), stream)
-            requested.subscribe(ChannelSubscriber(channel_completion_event, http_session, cfg.get('human_url'), cfg))
-            await channel_completion_event.wait()
+    """主函数：启动 WebSocket 监听服务"""
+    await ws_listen(websocket_uri, human_url, config_path)
 
 async def ws_listen(websocket_uri: str, human_url: str, config_path: Optional[str]):
     """监听普通 WebSocket 推送服务，支持 Binary/Text 帧，UTF-8 解码并尝试 JSON 解析。"""
@@ -1175,12 +964,14 @@ async def ws_listen(websocket_uri: str, human_url: str, config_path: Optional[st
                     async for msg in ws:
                         text = None
                         if msg.type == aiohttp.WSMsgType.BINARY:
-                            try:
-                                text = msg.data.decode('utf-8', errors='ignore')
-                            except Exception:
-                                text = None
+                            # 使用统一的二进制解码方法
+                            text = _decode_binary_data(msg.data)
+                            if text is None:
+                                continue
+                            logging.debug(f"[WS] 二进制数据解码成功，长度: {len(text)}")
                         elif msg.type == aiohttp.WSMsgType.TEXT:
                             text = msg.data
+                            logging.debug(f"[WS] 收到文本数据，长度: {len(text)}")
                         elif msg.type == aiohttp.WSMsgType.ERROR:
                             logging.warning(f"WS 错误: {ws.exception()}")
                             break
@@ -1265,6 +1056,7 @@ async def ws_listen(websocket_uri: str, human_url: str, config_path: Optional[st
                             buffer = buffer[last_end:]
         except Exception as e:
             logging.error(f"WS 连接失败: {e}")
+
 
 async def _ws_maybe_dispatch(http_session: aiohttp.ClientSession, config: Dict[str, Any], msg_dto: Dict[str, Any]):
     msg_type = msg_dto.get('type', '')
@@ -1394,26 +1186,58 @@ async def _ws_maybe_dispatch(http_session: aiohttp.ClientSession, config: Dict[s
         logging.error(f"[/human异常] 网络错误:{e} | 会话ID:{sessionid} | 文本:{text[:30]}")
 
 
+def setup_logging():
+    """配置日志系统：同时输出到控制台和文件，支持日志轮转"""
+    # 创建logs目录
+    log_dir = 'logs'
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # 创建日志格式
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # 创建根日志记录器
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # 清除现有的处理器
+    logger.handlers.clear()
+    
+    # 文件处理器 - 支持日志轮转（每个文件最大10MB，保留5个备份）
+    file_handler = RotatingFileHandler(
+        os.path.join(log_dir, 'barrage_websocket.log'),
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    # 控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    logging.info("日志系统已初始化 - 输出到控制台和文件: logs/barrage_websocket.log")
+
+
 if __name__ == '__main__':
     """
-    参考：https://github.com/rsocket/rsocket-py
-    > First Run
-    pip3 install rsocket
-    pip3 install aiohttp
+    WebSocket 弹幕监听服务
     
-    python websocket.py -t taskId1 -t taskId2
+    使用方法:
+    python barrage_websocket.py --uri ws://localhost:8080/websocket --human_url http://localhost:8010/human
     """
-    logging.basicConfig(level=logging.INFO)
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', default='ws', choices=['ws', 'rsocket'], help='监听模式：ws(默认) 或 rsocket')
+    # 初始化日志系统
+    setup_logging()
+    
+    parser = argparse.ArgumentParser(description='WebSocket 弹幕监听服务')
     parser.add_argument('--uri', default='ws://192.168.1.88:8080/websocket', type=str, help="WebSocket Server Uri")
-    # parser.add_argument('-t', action='append', required=True, help="taskIds")
     parser.add_argument('--human_url', default='http://192.168.2.43:8010/human', type=str, help='aiohttp服务 /human 接口地址')
     parser.add_argument('--config', default='config/barrage_config.json', type=str, help='弹幕转发配置文件路径')
     args = parser.parse_args()
 
-    uri = args.uri
-    # subscribe_payload_json["data"]["taskIds"] = args.t
-    # print(subscribe_payload_json)
-    globals()['_RUN_MODE'] = args.mode
-    asyncio.run(main(uri, args.human_url, args.config))
+    asyncio.run(main(args.uri, args.human_url, args.config))
