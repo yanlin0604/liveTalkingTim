@@ -43,6 +43,7 @@ from config_callbacks import setup_config_callbacks
 # 导入重构后的API模块（只保留核心数字人服务接口）
 from api.webrtc import WebRTCAPI
 from api.chat import ChatAPI
+from api.rtmp import RTMPAPI
 
 # 添加当前目录到Python路径，确保能找到swagger模块
 import sys
@@ -399,13 +400,9 @@ if __name__ == '__main__':
         logger.info(opt)
         model = load_model(opt)
 
+    # RTMP推流模式调整为按需启动，不再自动启动
     if opt.transport=='rtmp':
-        thread_quit = Event()
-        nerfreal = build_nerfreal(0)
-        safe_set_nerfreal(0, nerfreal)
-        rendthrd = Thread(target=nerfreal.render, args=(thread_quit,))
-        rendthrd.start()
-        logger.info(f"RTMP 推流线程已启动，目标: {opt.push_url}")
+        logger.info(f"RTMP推流模式已启用，可通过API接口启动推流，目标: {opt.push_url}")
     if opt.transport=='virtualcam':
         thread_quit = Event()
         nerfreal = build_nerfreal(0)
@@ -423,6 +420,7 @@ if __name__ == '__main__':
     # 初始化API模块（只保留核心数字人服务接口）
     webrtc_api = WebRTCAPI(build_nerfreal, nerfreals, nerfreals_lock, pcs)
     chat_api = ChatAPI(nerfreals, nerfreals_lock)
+    rtmp_api = RTMPAPI(build_nerfreal, nerfreals, nerfreals_lock, opt)
     
     # WebRTC相关接口
     appasync.router.add_post("/offer", webrtc_api.offer)  # WebRTC连接建立，处理SDP offer
@@ -440,6 +438,17 @@ if __name__ == '__main__':
     # 对话控制接口
     appasync.router.add_post("/interrupt_talk", chat_api.interrupt_talk)  # 打断数字人当前说话
     appasync.router.add_post("/is_speaking", chat_api.is_speaking)  # 检查数字人是否正在说话
+    
+    # RTMP推流控制接口
+    appasync.router.add_post("/rtmp/start", rtmp_api.start_rtmp_stream)  # 启动RTMP推流
+    appasync.router.add_post("/rtmp/stop", rtmp_api.stop_rtmp_stream)  # 停止RTMP推流
+    appasync.router.add_get("/rtmp/status", rtmp_api.get_rtmp_status)  # 获取RTMP推流状态
+    appasync.router.add_get("/rtmp/sessions", rtmp_api.list_rtmp_sessions)  # 列出所有RTMP推流会话
+    
+    # RTMP清晰度控制接口
+    appasync.router.add_post("/rtmp/quality", rtmp_api.set_rtmp_quality)  # 设置RTMP推流清晰度
+    appasync.router.add_get("/rtmp/quality", rtmp_api.get_rtmp_quality)  # 获取RTMP推流清晰度信息
+    appasync.router.add_get("/rtmp/stats", rtmp_api.get_rtmp_stats)  # 获取RTMP推流统计信息
     
     # 添加Swagger文档
     create_swagger_docs(appasync)

@@ -206,6 +206,19 @@ class WebRTCAPI:
         logger.info(f"📋 会话ID: {sessionid}")
         logger.info(f"📊 当前会话数: {len(self.nerfreals)}")
         
+        # 检查并处理RTMP推流冲突
+        conflict_result = await self._handle_rtmp_conflict(sessionid)
+        if conflict_result['has_conflict']:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({
+                    "code": -1, 
+                    "msg": f"RTMP推流冲突: {conflict_result['message']}",
+                    "suggestion": conflict_result['suggestion']
+                }),
+                status=409
+            )
+        
         # 检查是否已存在该sessionid的会话实例
         with self.nerfreals_lock:
             existing_nerfreal = self.nerfreals.get(sessionid)
@@ -568,4 +581,45 @@ class WebRTCAPI:
             logger.error(f"❌ 清理会话 {sessionid} 资源时出错: {e}")
         finally:
             # 强制垃圾回收
-            gc.collect() 
+            gc.collect()
+    
+    async def _handle_rtmp_conflict(self, sessionid):
+        """处理RTMP推流冲突，返回冲突检查结果"""
+        try:
+            # 检查是否有同sessionid的RTMP推流正在运行
+            with self.nerfreals_lock:
+                existing_nerfreal = self.nerfreals.get(sessionid)
+            
+            if existing_nerfreal and hasattr(existing_nerfreal, 'opt'):
+                if getattr(existing_nerfreal.opt, 'transport', '') == 'rtmp':
+                    return {
+                        'has_conflict': True,
+                        'message': f'会话 {sessionid} 已有RTMP推流在运行',
+                        'suggestion': '请先停止RTMP推流或使用不同的sessionid'
+                    }
+            
+            # 检查是否有其他活跃的RTMP推流
+            rtmp_sessions = []
+            with self.nerfreals_lock:
+                for sid, nerfreal in self.nerfreals.items():
+                    if nerfreal and hasattr(nerfreal, 'opt'):
+                        if getattr(nerfreal.opt, 'transport', '') == 'rtmp':
+                            rtmp_sessions.append(sid)
+            
+            if rtmp_sessions:
+                logger.warning(f"⚠️ 检测到活跃RTMP推流会话: {rtmp_sessions}")
+                logger.warning(f"💡 建议停止不必要的RTMP推流以避免音频资源冲突")
+            
+            return {
+                'has_conflict': False,
+                'message': 'No conflict detected',
+                'suggestion': None
+            }
+            
+        except Exception as e:
+            logger.error(f"检查RTMP冲突时出错: {e}")
+            return {
+                'has_conflict': False,
+                'message': f'Error checking conflict: {e}',
+                'suggestion': None
+            } 

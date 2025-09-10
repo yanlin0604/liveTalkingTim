@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTMP推流控制面板</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .control-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        .control-section {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 15px;
+            border: 1px solid #e9ecef;
+        }
+
+        .control-section h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .control-section h3::before {
+            content: "🎥";
+            margin-right: 10px;
+            font-size: 1.5rem;
+        }
+
+        .quality-info {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+            font-size: 0.9rem;
+        }
+
+        .stats-info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+            font-size: 0.9rem;
+        }
+
+        .quality-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 5px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            margin: 2px;
+        }
+
+        .quality-ultra { background: #e3f2fd; color: #1565c0; }
+        .quality-high { background: #f3e5f5; color: #7b1fa2; }
+        .quality-medium { background: #fff3e0; color: #ef6c00; }
+        .quality-low { background: #e8f5e8; color: #388e3c; }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 600;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            min-width: 120px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(255, 107, 107, 0.3);
+        }
+
+        .btn-info {
+            background: linear-gradient(135deg, #4ecdc4, #44a08d);
+            color: white;
+        }
+
+        .btn-info:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(78, 205, 196, 0.3);
+        }
+
+        .status-panel {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 15px;
+            border: 1px solid #e9ecef;
+        }
+
+        .status-panel h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .status-panel h3::before {
+            content: "📊";
+            margin-right: 10px;
+            font-size: 1.5rem;
+        }
+
+        .session-list {
+            display: grid;
+            gap: 15px;
+        }
+
+        .session-item {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #e9ecef;
+            transition: transform 0.2s ease;
+        }
+
+        .session-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .session-id {
+            font-family: 'Courier New', monospace;
+            background: #f1f3f4;
+            padding: 4px 8px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-running {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-stopped {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .session-details {
+            font-size: 0.9rem;
+            color: #666;
+            line-height: 1.5;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .loading::after {
+            content: "";
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        @media (max-width: 768px) {
+            .control-panel {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .container {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>RTMP推流控制面板</h1>
+            <p>管理和监控RTMP推流会话</p>
+        </div>
+
+        <div id="alertContainer"></div>
+
+        <div class="control-panel">
+            <div class="control-section">
+                <h3>启动推流</h3>
+                <div class="form-group">
+                    <label for="pushUrl">推流地址 (RTMP URL)</label>
+                    <input type="text" id="pushUrl" placeholder="rtmp://localhost/live/livestream" 
+                           value="rtmp://localhost/live/livestream">
+                </div>
+                <div class="form-group">
+                    <label for="sessionId">会话ID (可选，留空自动生成)</label>
+                    <input type="text" id="sessionId" placeholder="留空自动生成UUID">
+                </div>
+                <button class="btn btn-primary" onclick="startStream()">🚀 启动推流</button>
+            </div>
+
+            <div class="control-section">
+                <h3>停止推流</h3>
+                <div class="form-group">
+                    <label for="stopSessionId">会话ID</label>
+                    <input type="text" id="stopSessionId" placeholder="输入要停止的会话ID">
+                </div>
+                <button class="btn btn-danger" onclick="stopStream()">⏹️ 停止推流</button>
+                <button class="btn btn-info" onclick="refreshStatus()">🔄 刷新状态</button>
+            </div>
+        </div>
+
+        <div class="control-panel">
+            <div class="control-section">
+                <h3 style="color: #e67e22;">🎯 清晰度调整</h3>
+                <div class="form-group">
+                    <label for="qualitySessionId">会话ID</label>
+                    <input type="text" id="qualitySessionId" placeholder="输入要调整清晰度的会话ID">
+                </div>
+                <div class="form-group">
+                    <label for="qualityLevel">清晰度级别</label>
+                    <select id="qualityLevel" style="width: 100%; padding: 12px 15px; border: 2px solid #e9ecef; border-radius: 10px; font-size: 1rem;">
+                        <option value="ultra">🔵 蓝光 (Ultra) - 最高质量</option>
+                        <option value="high" selected>🔴 高清 (High) - 推荐</option>
+                        <option value="medium">🟡 普通 (Medium) - 平衡</option>
+                        <option value="low">🟢 流畅 (Low) - 省带宽</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="setQuality()">🎯 设置清晰度</button>
+                <button class="btn btn-info" onclick="getQualityInfo()">📊 查看清晰度</button>
+            </div>
+
+            <div class="control-section">
+                <h3 style="color: #27ae60;">📊 推流统计</h3>
+                <div class="form-group">
+                    <label for="statsSessionId">会话ID</label>
+                    <input type="text" id="statsSessionId" placeholder="输入要查看统计的会话ID">
+                </div>
+                <button class="btn btn-info" onclick="getStats()">📊 查看统计</button>
+                <button class="btn btn-primary" onclick="loadAvailableQualities()">🎯 可用清晰度</button>
+            </div>
+        </div>
+
+        <div class="status-panel">
+            <h3>推流会话状态</h3>
+            <div id="sessionList">
+                <div class="loading">正在加载推流状态...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API基础URL
+        const API_BASE = '';
+
+        // 显示提示信息
+        function showAlert(message, type = 'info') {
+            const alertContainer = document.getElementById('alertContainer');
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.textContent = message;
+            
+            alertContainer.appendChild(alertDiv);
+            
+            // 5秒后自动移除
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.parentNode.removeChild(alertDiv);
+                }
+            }, 5000);
+        }
+
+        // 启动推流
+        async function startStream() {
+            const pushUrl = document.getElementById('pushUrl').value.trim();
+            const sessionId = document.getElementById('sessionId').value.trim();
+
+            if (!pushUrl) {
+                showAlert('请输入推流地址', 'error');
+                return;
+            }
+
+            if (!pushUrl.startsWith('rtmp://')) {
+                showAlert('推流地址必须以rtmp://开头', 'error');
+                return;
+            }
+
+            const data = { push_url: pushUrl };
+            if (sessionId) {
+                data.sessionid = sessionId;
+            }
+
+            try {
+                showAlert('正在启动推流...', 'info');
+                
+                const response = await fetch('/rtmp/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (result.code === 200) {
+                    showAlert(`推流启动成功！会话ID: ${result.data.sessionid}`, 'success');
+                    document.getElementById('sessionId').value = '';
+                    refreshStatus();
+                } else {
+                    showAlert(`启动失败: ${result.message}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`启动失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 停止推流
+        async function stopStream() {
+            const sessionId = document.getElementById('stopSessionId').value.trim();
+
+            if (!sessionId) {
+                showAlert('请输入要停止的会话ID', 'error');
+                return;
+            }
+
+            try {
+                showAlert('正在停止推流...', 'info');
+                
+                const response = await fetch('/rtmp/stop', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ sessionid: sessionId })
+                });
+
+                const result = await response.json();
+
+                if (result.code === 200) {
+                    showAlert(`推流停止成功！会话ID: ${sessionId}`, 'success');
+                    document.getElementById('stopSessionId').value = '';
+                    refreshStatus();
+                } else {
+                    showAlert(`停止失败: ${result.message}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`停止失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 刷新状态
+        async function refreshStatus() {
+            const sessionList = document.getElementById('sessionList');
+            sessionList.innerHTML = '<div class="loading">正在加载推流状态...</div>';
+
+            try {
+                const response = await fetch('/rtmp/sessions');
+                const result = await response.json();
+
+                if (result.code === 200) {
+                    displaySessions(result.data.sessions);
+                } else {
+                    sessionList.innerHTML = `<div class="alert alert-error">加载失败: ${result.message}</div>`;
+                }
+            } catch (error) {
+                sessionList.innerHTML = `<div class="alert alert-error">加载失败: ${error.message}</div>`;
+            }
+        }
+
+        // 显示会话列表
+        function displaySessions(sessions) {
+            const sessionList = document.getElementById('sessionList');
+
+            if (sessions.length === 0) {
+                sessionList.innerHTML = '<div class="alert alert-info">暂无推流会话</div>';
+                return;
+            }
+
+            const sessionsHtml = sessions.map(session => {
+                const startTime = new Date(session.start_time * 1000).toLocaleString();
+                const stopTime = session.stop_time ? new Date(session.stop_time * 1000).toLocaleString() : '-';
+                const duration = Math.floor(session.duration);
+                const durationStr = `${Math.floor(duration / 60)}分${duration % 60}秒`;
+
+                return `
+                    <div class="session-item">
+                        <div class="session-header">
+                            <span class="session-id">${session.sessionid}</span>
+                            <span class="status-badge status-${session.status}">${session.status === 'running' ? '运行中' : '已停止'}</span>
+                        </div>
+                        <div class="session-details">
+                            <div><strong>推流地址:</strong> ${session.push_url}</div>
+                            <div><strong>开始时间:</strong> ${startTime}</div>
+                            <div><strong>停止时间:</strong> ${stopTime}</div>
+                            <div><strong>持续时间:</strong> ${durationStr}</div>
+                            <div><strong>线程状态:</strong> ${session.thread_alive ? '活跃' : '已结束'}</div>
+                        </div>
+                        ${session.status === 'running' ? `
+                            <div style="margin-top: 10px;">
+                                <button class="btn btn-danger" onclick="stopStreamById('${session.sessionid}')">
+                                    ⏹️ 停止推流
+                                </button>
+                                <button class="btn btn-primary" onclick="document.getElementById('qualitySessionId').value='${session.sessionid}'">
+                                    🎯 设置清晰度
+                                </button>
+                                <button class="btn btn-info" onclick="document.getElementById('statsSessionId').value='${session.sessionid}'; getStats()">
+                                    📊 查看统计
+                                </button>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            sessionList.innerHTML = sessionsHtml;
+        }
+
+        // 根据ID停止推流
+        async function stopStreamById(sessionId) {
+            document.getElementById('stopSessionId').value = sessionId;
+            await stopStream();
+        }
+
+        // 设置清晰度
+        async function setQuality() {
+            const sessionId = document.getElementById('qualitySessionId').value.trim();
+            const qualityLevel = document.getElementById('qualityLevel').value;
+
+            if (!sessionId) {
+                showAlert('请输入会话ID', 'error');
+                return;
+            }
+
+            try {
+                showAlert('正在设置清晰度...', 'info');
+                
+                const response = await fetch('/rtmp/quality', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        sessionid: sessionId, 
+                        quality: qualityLevel 
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.code === 200) {
+                    const qualityInfo = result.data.quality_info;
+                    showAlert(`清晰度设置成功！${qualityInfo.message}`, 'success');
+                    
+                    // 显示详细信息
+                    const infoDiv = document.createElement('div');
+                    infoDiv.className = 'quality-info';
+                    infoDiv.innerHTML = `
+                        <strong>清晰度设置结果:</strong><br>
+                        原清晰度: <span class="quality-badge quality-${qualityInfo.old_quality.level}">${qualityInfo.old_quality.name}</span><br>
+                        新清晰度: <span class="quality-badge quality-${qualityInfo.new_quality.level}">${qualityInfo.new_quality.name}</span><br>
+                        ${qualityInfo.need_restart ? '🔄 推流已重新初始化以应用新设置' : ''}
+                    `;
+                    
+                    const alertContainer = document.getElementById('alertContainer');
+                    alertContainer.appendChild(infoDiv);
+                    
+                    setTimeout(() => {
+                        if (infoDiv.parentNode) {
+                            infoDiv.parentNode.removeChild(infoDiv);
+                        }
+                    }, 8000);
+                    
+                } else {
+                    showAlert(`设置失败: ${result.message}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`设置失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 获取清晰度信息
+        async function getQualityInfo() {
+            const sessionId = document.getElementById('qualitySessionId').value.trim();
+
+            if (!sessionId) {
+                showAlert('请输入会话ID', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/rtmp/quality?sessionid=${sessionId}`);
+                const result = await response.json();
+
+                if (result.code === 200) {
+                    const qualityInfo = result.data.quality_info;
+                    
+                    const infoDiv = document.createElement('div');
+                    infoDiv.className = 'quality-info';
+                    infoDiv.innerHTML = `
+                        <strong>当前清晰度信息:</strong><br>
+                        清晰度级别: <span class="quality-badge quality-${qualityInfo.current_level}">${qualityInfo.current_name}</span><br>
+                        视频码率: ${qualityInfo.actual_video_bitrate || '未知'}<br>
+                        音频码率: ${qualityInfo.actual_audio_bitrate}<br>
+                        分辨率: ${qualityInfo.resolution || '未知'}<br>
+                        推流状态: ${qualityInfo.is_streaming ? '正在推流' : '未推流'}
+                    `;
+                    
+                    const alertContainer = document.getElementById('alertContainer');
+                    alertContainer.appendChild(infoDiv);
+                    
+                    setTimeout(() => {
+                        if (infoDiv.parentNode) {
+                            infoDiv.parentNode.removeChild(infoDiv);
+                        }
+                    }, 8000);
+                    
+                } else {
+                    showAlert(`获取失败: ${result.message}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`获取失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 获取统计信息
+        async function getStats() {
+            const sessionId = document.getElementById('statsSessionId').value.trim();
+
+            if (!sessionId) {
+                showAlert('请输入会话ID', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/rtmp/stats?sessionid=${sessionId}`);
+                const result = await response.json();
+
+                if (result.code === 200) {
+                    const stats = result.data.stats;
+                    
+                    const infoDiv = document.createElement('div');
+                    infoDiv.className = 'stats-info';
+                    infoDiv.innerHTML = `
+                        <strong>RTMP推流统计:</strong><br>
+                        总帧数: ${stats.total_frames || 0}<br>
+                        丢帧数: ${stats.dropped_frames || 0}<br>
+                        丢帧率: ${stats.total_frames ? ((stats.dropped_frames || 0) / stats.total_frames * 100).toFixed(2) : 0}%<br>
+                        推流状态: ${stats.is_streaming ? '正在推流' : '未推流'}<br>
+                        分辨率: ${stats.resolution || '未知'}<br>
+                        目标帧率: ${stats.target_fps || '未知'} FPS
+                    `;
+                    
+                    const alertContainer = document.getElementById('alertContainer');
+                    alertContainer.appendChild(infoDiv);
+                    
+                    setTimeout(() => {
+                        if (infoDiv.parentNode) {
+                            infoDiv.parentNode.removeChild(infoDiv);
+                        }
+                    }, 8000);
+                    
+                } else {
+                    showAlert(`获取统计失败: ${result.message}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`获取统计失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 加载可用清晰度级别
+        async function loadAvailableQualities() {
+            try {
+                const response = await fetch('/rtmp/quality');
+                const result = await response.json();
+
+                if (result.code === 200) {
+                    const qualities = result.data.available_qualities;
+                    
+                    const infoDiv = document.createElement('div');
+                    infoDiv.className = 'quality-info';
+                    
+                    let qualitiesHtml = '<strong>可用清晰度级别:</strong><br>';
+                    qualities.forEach(q => {
+                        qualitiesHtml += `
+                            <span class="quality-badge quality-${q.level}">${q.name}</span> 
+                            <small>${q.description}</small><br>
+                        `;
+                    });
+                    
+                    infoDiv.innerHTML = qualitiesHtml;
+                    
+                    const alertContainer = document.getElementById('alertContainer');
+                    alertContainer.appendChild(infoDiv);
+                    
+                    setTimeout(() => {
+                        if (infoDiv.parentNode) {
+                            infoDiv.parentNode.removeChild(infoDiv);
+                        }
+                    }, 10000);
+                    
+                } else {
+                    showAlert(`获取失败: ${result.message}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`获取失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 页面加载时自动刷新状态
+        document.addEventListener('DOMContentLoaded', function() {
+            refreshStatus();
+            
+            // 每30秒自动刷新状态
+            setInterval(refreshStatus, 30000);
+        });
+
+        // 回车键快捷操作
+        document.getElementById('pushUrl').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                startStream();
+            }
+        });
+
+        document.getElementById('sessionId').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                startStream();
+            }
+        });
+
+        document.getElementById('stopSessionId').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                stopStream();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -75,6 +75,49 @@ class BaseReal:
         self.chunk = self.sample_rate // opt.fps # 320 samples per chunk (20ms * 16000 / 1000)
         self.sessionid = self.opt.sessionid
         
+        # RTMP推流预初始化变量
+        self.rtmp_container = None
+        self.vstream = None
+        self.astream = None
+        self.audio_resampler = None
+        self.rtmp_width = 0
+        self.rtmp_height = 0
+        self.video_frame_index = 0
+        self.rtmp_initialized = False
+        
+        # RTMP清晰度配置
+        self.rtmp_quality_level = 'high'  # 默认高清
+        self.rtmp_quality_configs = {
+            'ultra': {  # 蓝光
+                'name': '蓝光',
+                'bitrate_factor': 1.5,
+                'crf': 18,
+                'preset': 'slow',
+                'audio_bitrate': '192k'
+            },
+            'high': {  # 高清
+                'name': '高清',
+                'bitrate_factor': 1.0,
+                'crf': 21,
+                'preset': 'medium',
+                'audio_bitrate': '128k'
+            },
+            'medium': {  # 普通
+                'name': '普通',
+                'bitrate_factor': 0.7,
+                'crf': 24,
+                'preset': 'fast',
+                'audio_bitrate': '96k'
+            },
+            'low': {  # 流畅
+                'name': '流畅',
+                'bitrate_factor': 0.4,
+                'crf': 28,
+                'preset': 'faster',
+                'audio_bitrate': '64k'
+            }
+        }
+        
         print(f"=== BaseReal初始化TTS ===")
         print(f"opt.tts = {opt.tts}")
         print(f"opt对象: {opt}")
@@ -166,6 +209,21 @@ class BaseReal:
         self.enable_quality_monitoring = self.streaming_quality.get('enable_quality_monitoring', True)
         self.enable_frame_rate_control = self.streaming_quality.get('enable_frame_rate_control', True)
         self.enable_queue_management = self.streaming_quality.get('enable_queue_management', True)
+        
+        # RTMP推流性能统计
+        self.rtmp_stats = {
+            'start_time': None,
+            'total_frames': 0,
+            'dropped_frames': 0,
+            'encoding_errors': 0,
+            'audio_errors': 0,
+            'reconnections': 0,
+            'avg_fps': 0.0,
+            'current_bitrate': '0k',
+            'last_stats_time': time.time(),
+            'frame_times': [],
+            'encoding_times': []
+        }
         
         logger.info(f"推流质量配置: 目标帧率={self.target_fps}fps, 最大队列={self.max_video_queue_size}, 最小队列={self.min_video_queue_size}")
         
@@ -586,7 +644,7 @@ class BaseReal:
     def set_custom_silent_audiotype(self, audiotype: str):
         """运行时设置静默自定义动作类型，并重新加载配置
 
-        参数:
+        参数：
             audiotype: 目标动作类型（字符串，可为空字符串表示不指定）
         """
         old_type = getattr(self, 'custom_silent_audiotype', "")
@@ -648,14 +706,8 @@ class BaseReal:
             audio_thread = Thread(target=play_audio, args=(quit_event,audio_tmp,), daemon=True, name="pyaudio_stream")
             audio_thread.start()
         elif self.opt.transport=='rtmp':
-            # RTMP 推流相关对象延迟初始化（在拿到第一帧视频后再初始化尺寸）
-            rtmp_container = None
-            vstream = None
-            astream = None
-            audio_resampler = None
-            rtmp_width = 0
-            rtmp_height = 0
-            video_frame_index = 0
+            # RTMP推流预初始化（提前准备，减少首帧延迟）
+            self._prepare_rtmp_streams()
         
         while not quit_event.is_set():
             # 帧率控制 - 使用配置的目标帧率
@@ -777,41 +829,48 @@ class BaseReal:
                     vircam = pyvirtualcam.Camera(width=width, height=height, fps=25, fmt=pyvirtualcam.PixelFormat.BGR,print_fps=True)
                 vircam.send(combine_frame)
             elif self.opt.transport=='rtmp':
-                # 懒加载初始化 RTMP 输出（基于首帧尺寸）
-                if rtmp_container is None:
-                    height, width, _ = combine_frame.shape
-                    rtmp_width, rtmp_height = width, height
+                # 零延迟RTMP推流处理
+                if not self.rtmp_initialized:
+                    self._initialize_rtmp_with_frame(combine_frame, target_fps)
+                
+                if self.rtmp_initialized:
+                    # 高效视频帧编码和推送
                     try:
-                        # 以 FLV 格式打开 RTMP 输出
-                        rtmp_container = av.open(self.opt.push_url, mode='w', format='flv')
-                        # 视频流（libx264）
-                        vstream = rtmp_container.add_stream('libx264', rate=int(target_fps))
-                        vstream.width = rtmp_width
-                        vstream.height = rtmp_height
-                        vstream.pix_fmt = 'yuv420p'
-                        vstream.bit_rate = 2_000_000  # ~2Mbps
-                        vstream.gop_size = int(target_fps * 2)  # 关键帧间隔
-                        # 音频流（AAC），统一转为44.1kHz立体声，兼容性更好
-                        astream = rtmp_container.add_stream('aac', rate=44100)
-                        astream.layout = 'stereo'
-                        astream.channels = 2
-                        audio_resampler = AudioResampler(format='s16', layout='stereo', rate=44100)
-                        logger.info(f"RTMP 推流初始化成功 -> {self.opt.push_url} ({rtmp_width}x{rtmp_height}@{int(target_fps)}fps)")
+                        # 获取当前队列大小用于自适应编码
+                        current_queue_size = video_track._queue.qsize() if video_track else 0
+                        
+                        # 优化视频帧创建
+                        vframe = VideoFrame.from_ndarray(combine_frame, format='bgr24')
+                        if vframe.format.name != 'yuv420p':
+                            vframe = vframe.reformat(format='yuv420p')
+                        
+                        vframe.pts = self.video_frame_index
+                        vframe.time_base = Fraction(1, int(target_fps))
+                        self.video_frame_index += 1
+                        
+                        # 批量编码减少系统调用
+                        packets = list(self.vstream.encode(vframe))
+                        for packet in packets:
+                            self.rtmp_container.mux(packet)
+                        
+                        # 更新性能统计
+                        self._update_rtmp_stats(True, False)
+                        
+                        # 每100帧检查一次编码性能并动态调整
+                        if self.video_frame_index % 100 == 0:
+                            self._check_and_adjust_encoding_quality(current_queue_size, target_fps)
+                            self._log_rtmp_performance_stats()
+                            
+                    except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                        logger.warning(f"RTMP 连接异常: {e}, 尝试重新初始化")
+                        self._update_rtmp_stats(False, False)  # 记录编码错误
+                        self._reinitialize_rtmp()
                     except Exception as e:
-                        logger.error(f"RTMP 推流初始化失败: {e}")
-                        # 出错则跳过本帧，避免阻塞
-                        continue
-
-                # 编码并推送视频帧
-                try:
-                    vframe = VideoFrame.from_ndarray(combine_frame, format="bgr24").reformat(width=rtmp_width, height=rtmp_height, format='yuv420p')
-                    vframe.pts = video_frame_index
-                    vframe.time_base = Fraction(1, int(target_fps))
-                    video_frame_index += 1
-                    for packet in vstream.encode(vframe):
-                        rtmp_container.mux(packet)
-                except Exception as e:
-                    logger.warning(f"RTMP 视频编码/推送异常: {e}")
+                        logger.warning(f"RTMP 视频编码/推送异常: {e}")
+                        self._update_rtmp_stats(False, False)  # 记录编码错误
+                        # 视频编码异常不影响音频推流，但检查是否需要重新初始化连接
+                        if "Broken pipe" in str(e) or "Connection reset" in str(e):
+                            self._reinitialize_rtmp()
             else: #webrtc
                 # 实时推流优化：确保图像质量和传输稳定性
                 image = combine_frame
@@ -848,19 +907,14 @@ class BaseReal:
                 if self.opt.transport=='virtualcam':
                     audio_tmp.put(frame.tobytes()) #TODO
                 elif self.opt.transport=='rtmp':
-                    # 将16kHz单声道PCM重采样至44.1kHz立体声并编码推送
-                    if 'rtmp_container' in locals() and rtmp_container is not None and astream is not None and audio_resampler is not None:
-                        try:
-                            new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
-                            new_frame.planes[0].update(frame.tobytes())
-                            new_frame.sample_rate = 16000
-                            for rframe in audio_resampler.resample(new_frame):
-                                for packet in astream.encode(rframe):
-                                    rtmp_container.mux(packet)
-                        except Exception as e:
-                            logger.warning(f"RTMP 音频编码/推送异常: {e}")
+                    # 优化的音频处理
+                    if self.rtmp_initialized:
+                        success = self._optimize_audio_encoding(frame)
+                        if not success:
+                            # 音频编码失败时的处理
+                            pass
                     else:
-                        # 若容器尚未初始化（通常等待首个视频帧），则跳过音频
+                        # 容器未初始化时跳过音频
                         pass
                 else: #webrtc
                     new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
@@ -890,18 +944,8 @@ class BaseReal:
             audio_thread.join()
             vircam.close()
         if self.opt.transport=='rtmp':
-            # 刷新缓冲并关闭容器
-            try:
-                if 'vstream' in locals() and vstream is not None and 'rtmp_container' in locals() and rtmp_container is not None:
-                    for packet in vstream.encode(None):
-                        rtmp_container.mux(packet)
-                if 'astream' in locals() and astream is not None and 'rtmp_container' in locals() and rtmp_container is not None:
-                    for packet in astream.encode(None):
-                        rtmp_container.mux(packet)
-                if 'rtmp_container' in locals() and rtmp_container is not None:
-                    rtmp_container.close()
-            except Exception as e:
-                logger.warning(f"RTMP 结束时清理异常: {e}")
+            # 优雅关闭RTMP推流
+            self._cleanup_rtmp()
         
         # 优雅停止：清理资源并记录日志
         logger.info('basereal process_frames thread stop - 优雅清理完成')
@@ -922,6 +966,490 @@ class BaseReal:
                 logger.info('🧹 清理音频特征队列')
             except:
                 pass
+    
+    def _prepare_rtmp_streams(self):
+        """预初始化RTMP推流资源，减少首帧延迟"""
+        try:
+            logger.info("🚀 开始预初始化RTMP推流资源")
+            
+            # 预设默认分辨率，实际会在首帧时更新
+            self.rtmp_width = 512
+            self.rtmp_height = 512
+            
+            # 预创建容器但不立即打开连接
+            logger.info("✅ RTMP推流资源预初始化完成")
+            
+        except Exception as e:
+            logger.error(f"❌ RTMP推流资源预初始化失败: {e}")
+    
+    def _initialize_rtmp_with_frame(self, frame, fps):
+        """使用首帧初始化RTMP推流，实现零延迟启动"""
+        try:
+            if self.rtmp_initialized:
+                return
+                
+            height, width, _ = frame.shape
+            self.rtmp_width = width
+            self.rtmp_height = height
+            
+            logger.info(f"🎬 使用首帧初始化RTMP推流: {width}x{height}@{fps}fps")
+            
+            # 打开RTMP容器
+            rtmp_url = getattr(self.opt, 'push_url', 'rtmp://localhost/live/stream')
+            self.rtmp_container = av.open(rtmp_url, 'w', format='flv')
+            
+            # 优化的视频编码参数配置
+            video_codec = 'libx264'
+            
+            # 根据清晰度级别和分辨率动态调整编码参数
+            quality_config = self.rtmp_quality_configs.get(self.rtmp_quality_level, self.rtmp_quality_configs['high'])
+            
+            # 基础码率根据分辨率确定
+            if width * height <= 640 * 480:  # 低分辨率
+                base_bitrate = 1500
+            elif width * height <= 1280 * 720:  # 中分辨率
+                base_bitrate = 2500
+            else:  # 高分辨率
+                base_bitrate = 4000
+            
+            # 应用清晰度因子
+            actual_bitrate = int(base_bitrate * quality_config['bitrate_factor'])
+            bitrate = f'{actual_bitrate}k'
+            maxrate = f'{int(actual_bitrate * 1.4)}k'
+            bufsize = f'{int(actual_bitrate * 2)}k'
+            crf = quality_config['crf']
+            preset = quality_config['preset']
+            
+            # 创建视频流
+            self.vstream = self.rtmp_container.add_stream(video_codec, rate=fps)
+            self.vstream.width = width
+            self.vstream.height = height
+            self.vstream.pix_fmt = 'yuv420p'
+            
+            # 优化的视频编码选项
+            self.vstream.options = {
+                'crf': str(crf),                    # 恒定质量因子
+                'preset': preset,                   # 编码速度预设
+                'tune': 'zerolatency',             # 零延迟优化
+                'profile': 'high',                 # H.264高质量配置
+                'level': '4.1',                    # H.264标准级别
+                'b:v': bitrate,                    # 目标码率
+                'maxrate': maxrate,                # 最大码率
+                'bufsize': bufsize,                # 缓冲区大小
+                'g': str(int(fps * 2)),           # GOP大小（2秒关键帧间隔）
+                'keyint_min': str(int(fps)),      # 最小关键帧间隔
+                'sc_threshold': '0',               # 禁用场景切换检测
+                'bf': '0',                         # 禁用B帧提升实时性
+                'refs': '1',                       # 参考帧数量
+                'me_method': 'hex',                # 运动估计方法
+                'subq': '6',                       # 子像素运动估计质量
+                'trellis': '1',                    # Trellis量化
+                'fast_pskip': '1',                 # 快速P帧跳过
+                'flags': '+cgop',                  # 封闭GOP
+                'x264opts': f'no-scenecut=1:keyint={int(fps * 2)}:min-keyint={int(fps)}:bframes=0'
+            }
+            
+            # 创建音频流
+            self.astream = self.rtmp_container.add_stream('aac', rate=44100)
+            self.astream.channels = 1
+            self.astream.layout = 'mono'
+            
+            # 优化的音频编码选项
+            audio_bitrate = quality_config['audio_bitrate']
+            self.astream.options = {
+                'b:a': audio_bitrate,              # 音频码率
+                'profile:a': 'aac_low',           # AAC低复杂度配置
+                'ar': '44100',                     # 采样率
+                'ac': '1'                          # 单声道
+            }
+            
+            # 创建音频重采样器
+            self.audio_resampler = av.AudioResampler(
+                format='s16',
+                layout='mono',
+                rate=44100
+            )
+            
+            self.video_frame_index = 0
+            self.rtmp_initialized = True
+            
+            logger.info(f"✅ RTMP推流初始化成功: {rtmp_url}")
+            logger.info(f"📹 视频参数: {width}x{height}@{fps}fps, 码率={bitrate}, CRF={crf}, 预设={preset}")
+            logger.info(f"🎵 音频参数: AAC 44.1kHz 单声道 {audio_bitrate}")
+            logger.info(f"🎯 清晰度级别: {quality_config['name']} ({self.rtmp_quality_level})")
+            
+        except Exception as e:
+            logger.error(f"❌ RTMP推流初始化失败: {e}")
+            self.rtmp_initialized = False
+            self._cleanup_rtmp()
+    
+    def _reinitialize_rtmp(self):
+        """重新初始化RTMP推流连接"""
+        try:
+            logger.warning("🔄 检测到RTMP连接异常，尝试重新初始化")
+            
+            # 记录重连统计
+            self.rtmp_stats['reconnections'] += 1
+            
+            self._cleanup_rtmp()
+            
+            # 重置初始化状态，等待下一帧触发重新初始化
+            self.rtmp_initialized = False
+            self.video_frame_index = 0
+            
+            logger.info("✅ RTMP推流重新初始化准备完成")
+            
+        except Exception as e:
+            logger.error(f"❌ RTMP推流重新初始化失败: {e}")
+            self.rtmp_stats['encoding_errors'] += 1
+    
+    def _cleanup_rtmp(self):
+        """清理RTMP推流资源"""
+        try:
+            logger.info("🧹 开始清理RTMP推流资源")
+            
+            # 发送结束包
+            if self.rtmp_initialized and self.vstream and self.astream:
+                try:
+                    # 刷新视频编码器
+                    for packet in self.vstream.encode(None):
+                        self.rtmp_container.mux(packet)
+                    
+                    # 刷新音频编码器
+                    for packet in self.astream.encode(None):
+                        self.rtmp_container.mux(packet)
+                        
+                    logger.info("📤 RTMP编码器刷新完成")
+                except Exception as e:
+                    logger.warning(f"RTMP编码器刷新异常: {e}")
+            
+            # 关闭容器
+            if self.rtmp_container:
+                try:
+                    self.rtmp_container.close()
+                    logger.info("📦 RTMP容器关闭完成")
+                except Exception as e:
+                    logger.warning(f"RTMP容器关闭异常: {e}")
+            
+            # 重置状态
+            self.rtmp_container = None
+            self.vstream = None
+            self.astream = None
+            self.audio_resampler = None
+            self.rtmp_initialized = False
+            self.video_frame_index = 0
+            
+            logger.info("✅ RTMP推流资源清理完成")
+            
+        except Exception as e:
+            logger.error(f"❌ RTMP推流资源清理异常: {e}")
+    
+    def _get_adaptive_encoding_params(self, width, height, current_fps, queue_size=0):
+        """根据分辨率、帧率和队列状态自适应调整编码参数"""
+        pixel_count = width * height
+        
+        # 基础参数配置
+        if pixel_count <= 320 * 240:  # 极低分辨率
+            base_bitrate = 800
+            base_crf = 25
+            preset = 'ultrafast'
+        elif pixel_count <= 640 * 480:  # 低分辨率
+            base_bitrate = 1200
+            base_crf = 23
+            preset = 'faster'
+        elif pixel_count <= 1280 * 720:  # 中分辨率
+            base_bitrate = 2000
+            base_crf = 21
+            preset = 'medium'
+        elif pixel_count <= 1920 * 1080:  # 高分辨率
+            base_bitrate = 3500
+            base_crf = 19
+            preset = 'medium'
+        else:  # 超高分辨率
+            base_bitrate = 5000
+            base_crf = 18
+            preset = 'slow'
+        
+        # 根据帧率调整码率
+        fps_factor = min(current_fps / 25.0, 1.5)  # 最大1.5倍调整
+        adjusted_bitrate = int(base_bitrate * fps_factor)
+        
+        # 根据队列状态动态调整（如果队列过大，降低质量提升编码速度）
+        if queue_size > 10:
+            preset = 'ultrafast'
+            base_crf = min(base_crf + 3, 28)  # 降低质量
+            adjusted_bitrate = int(adjusted_bitrate * 0.8)  # 降低码率
+        elif queue_size > 6:
+            preset = 'faster'
+            base_crf = min(base_crf + 1, 25)
+            adjusted_bitrate = int(adjusted_bitrate * 0.9)
+        
+        return {
+            'bitrate': f'{adjusted_bitrate}k',
+            'maxrate': f'{int(adjusted_bitrate * 1.5)}k',
+            'bufsize': f'{int(adjusted_bitrate * 2)}k',
+            'crf': base_crf,
+            'preset': preset
+        }
+    
+    def _check_and_adjust_encoding_quality(self, queue_size, current_fps):
+        """检查并动态调整编码质量以优化性能"""
+        try:
+            if not self.rtmp_initialized or not self.vstream:
+                return
+            
+            # 获取当前编码参数
+            current_params = self._get_adaptive_encoding_params(
+                self.rtmp_width, self.rtmp_height, current_fps, queue_size
+            )
+            
+            # 检查是否需要调整编码参数
+            needs_adjustment = False
+            
+            # 队列过大时需要降低质量
+            if queue_size > self.max_video_queue_size:
+                needs_adjustment = True
+                logger.info(f"📊 检测到队列过大({queue_size})，动态调整编码参数以提升性能")
+            
+            # 队列很小且性能良好时可以提升质量
+            elif queue_size < self.min_video_queue_size and hasattr(self, '_last_adjustment_time'):
+                time_since_last = time.time() - self._last_adjustment_time
+                if time_since_last > 30:  # 30秒后才考虑提升质量
+                    needs_adjustment = True
+                    logger.info(f"📊 检测到队列较小({queue_size})且性能稳定，尝试提升编码质量")
+            
+            if needs_adjustment:
+                self._last_adjustment_time = time.time()
+                logger.debug(f"🔧 建议编码参数: {current_params}")
+                
+        except Exception as e:
+            logger.warning(f"编码质量检查异常: {e}")
+    
+    def _optimize_audio_encoding(self, frame):
+        """优化音频编码处理"""
+        try:
+            if not self.rtmp_initialized or not self.astream or not self.audio_resampler:
+                return False
+            
+            # 创建音频帧
+            new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
+            new_frame.planes[0].update(frame.tobytes())
+            new_frame.sample_rate = 16000
+            
+            # 批量处理音频重采样和编码
+            resampled_frames = list(self.audio_resampler.resample(new_frame))
+            
+            # 批量编码和推送
+            for rframe in resampled_frames:
+                packets = list(self.astream.encode(rframe))
+                for packet in packets:
+                    self.rtmp_container.mux(packet)
+            
+            return True
+            
+        except Exception as e:
+            logger.warning(f"音频编码优化异常: {e}")
+            self._update_rtmp_stats(False, True)  # 记录音频错误
+            return False
+    
+    def _update_rtmp_stats(self, video_success=True, audio_error=False):
+        """更新RTMP推流性能统计"""
+        try:
+            current_time = time.time()
+            
+            # 初始化开始时间
+            if self.rtmp_stats['start_time'] is None:
+                self.rtmp_stats['start_time'] = current_time
+            
+            # 更新帧统计
+            if video_success:
+                self.rtmp_stats['total_frames'] += 1
+                self.rtmp_stats['frame_times'].append(current_time)
+                
+                # 保持最近100帧的时间记录
+                if len(self.rtmp_stats['frame_times']) > 100:
+                    self.rtmp_stats['frame_times'].pop(0)
+            else:
+                # 视频编码失败
+                self.rtmp_stats['encoding_errors'] += 1
+            
+            # 更新错误统计
+            if audio_error:
+                self.rtmp_stats['audio_errors'] += 1
+            
+            # 计算平均帧率
+            if len(self.rtmp_stats['frame_times']) >= 2:
+                time_span = self.rtmp_stats['frame_times'][-1] - self.rtmp_stats['frame_times'][0]
+                if time_span > 0:
+                    self.rtmp_stats['avg_fps'] = (len(self.rtmp_stats['frame_times']) - 1) / time_span
+            
+        except Exception as e:
+            logger.warning(f"更新RTMP统计异常: {e}")
+    
+    def _log_rtmp_performance_stats(self):
+        """记录RTMP推流性能统计信息"""
+        try:
+            current_time = time.time()
+            
+            # 每30秒记录一次详细统计
+            if current_time - self.rtmp_stats['last_stats_time'] >= 30:
+                self.rtmp_stats['last_stats_time'] = current_time
+                
+                # 计算运行时长
+                if self.rtmp_stats['start_time']:
+                    runtime = current_time - self.rtmp_stats['start_time']
+                    runtime_str = f"{int(runtime//60)}分{int(runtime%60)}秒"
+                else:
+                    runtime_str = "未知"
+                
+                # 计算错误率
+                total_frames = self.rtmp_stats['total_frames']
+                error_rate = (self.rtmp_stats['encoding_errors'] / max(total_frames, 1)) * 100
+                audio_error_rate = (self.rtmp_stats['audio_errors'] / max(total_frames, 1)) * 100
+                
+                logger.info("=" * 60)
+                logger.info("📊 RTMP推流性能统计报告")
+                logger.info("=" * 60)
+                logger.info(f"🕐 运行时长: {runtime_str}")
+                logger.info(f"🎬 总帧数: {total_frames}")
+                logger.info(f"📈 平均帧率: {self.rtmp_stats['avg_fps']:.2f} fps")
+                logger.info(f"🎯 目标帧率: {self.target_fps} fps")
+                logger.info(f"📊 当前码率: {self.rtmp_stats['current_bitrate']}")
+                logger.info(f"❌ 编码错误: {self.rtmp_stats['encoding_errors']} ({error_rate:.2f}%)")
+                logger.info(f"🔊 音频错误: {self.rtmp_stats['audio_errors']} ({audio_error_rate:.2f}%)")
+                logger.info(f"🔄 重连次数: {self.rtmp_stats['reconnections']}")
+                logger.info(f"📦 推流分辨率: {self.rtmp_width}x{self.rtmp_height}")
+                logger.info("=" * 60)
+                
+        except Exception as e:
+            logger.warning(f"记录RTMP性能统计异常: {e}")
+    
+    def get_rtmp_stats(self):
+        """获取RTMP推流统计信息（供API调用）"""
+        try:
+            current_time = time.time()
+            stats = self.rtmp_stats.copy()
+            
+            # 计算运行时长
+            if stats['start_time']:
+                stats['runtime_seconds'] = current_time - stats['start_time']
+            else:
+                stats['runtime_seconds'] = 0
+            
+            # 计算错误率
+            total_frames = stats['total_frames']
+            stats['encoding_error_rate'] = (stats['encoding_errors'] / max(total_frames, 1)) * 100
+            stats['audio_error_rate'] = (stats['audio_errors'] / max(total_frames, 1)) * 100
+            
+            # 添加推流状态信息
+            stats['is_streaming'] = self.rtmp_initialized
+            stats['resolution'] = f"{self.rtmp_width}x{self.rtmp_height}"
+            stats['target_fps'] = self.target_fps
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"获取RTMP统计信息异常: {e}")
+            return {}
+    
+    def set_rtmp_quality(self, quality_level):
+        """设置RTMP推流清晰度级别
+        
+        Args:
+            quality_level (str): 清晰度级别 ('ultra', 'high', 'medium', 'low')
+            
+        Returns:
+            dict: 操作结果
+        """
+        try:
+            if quality_level not in self.rtmp_quality_configs:
+                available_levels = list(self.rtmp_quality_configs.keys())
+                return {
+                    'success': False,
+                    'message': f'不支持的清晰度级别: {quality_level}，可用级别: {available_levels}'
+                }
+            
+            old_level = self.rtmp_quality_level
+            old_config = self.rtmp_quality_configs[old_level]
+            new_config = self.rtmp_quality_configs[quality_level]
+            
+            self.rtmp_quality_level = quality_level
+            
+            # 如果RTMP正在推流，需要重新初始化以应用新的清晰度设置
+            if self.rtmp_initialized:
+                logger.info(f"🔄 清晰度从 {old_config['name']} 切换到 {new_config['name']}，重新初始化推流")
+                self._reinitialize_rtmp()
+            
+            logger.info(f"✅ RTMP清晰度设置成功: {new_config['name']} ({quality_level})")
+            
+            return {
+                'success': True,
+                'message': f'清晰度已设置为: {new_config["name"]}',
+                'old_quality': {'level': old_level, 'name': old_config['name']},
+                'new_quality': {'level': quality_level, 'name': new_config['name']},
+                'need_restart': self.rtmp_initialized
+            }
+            
+        except Exception as e:
+            logger.error(f"设置RTMP清晰度异常: {e}")
+            return {
+                'success': False,
+                'message': f'设置清晰度失败: {str(e)}'
+            }
+    
+    def get_rtmp_quality_info(self):
+        """获取RTMP清晰度信息
+        
+        Returns:
+            dict: 清晰度信息
+        """
+        try:
+            current_config = self.rtmp_quality_configs[self.rtmp_quality_level]
+            
+            # 计算当前分辨率下的实际码率
+            if self.rtmp_width > 0 and self.rtmp_height > 0:
+                if self.rtmp_width * self.rtmp_height <= 640 * 480:
+                    base_bitrate = 1500
+                elif self.rtmp_width * self.rtmp_height <= 1280 * 720:
+                    base_bitrate = 2500
+                else:
+                    base_bitrate = 4000
+                
+                actual_bitrate = int(base_bitrate * current_config['bitrate_factor'])
+            else:
+                actual_bitrate = None
+            
+            return {
+                'current_level': self.rtmp_quality_level,
+                'current_name': current_config['name'],
+                'current_config': current_config,
+                'actual_video_bitrate': f'{actual_bitrate}k' if actual_bitrate else None,
+                'actual_audio_bitrate': current_config['audio_bitrate'],
+                'available_levels': {
+                    level: config['name'] for level, config in self.rtmp_quality_configs.items()
+                },
+                'is_streaming': self.rtmp_initialized,
+                'resolution': f"{self.rtmp_width}x{self.rtmp_height}" if self.rtmp_width > 0 else None
+            }
+            
+        except Exception as e:
+            logger.error(f"获取RTMP清晰度信息异常: {e}")
+            return {}
+    
+    def get_available_rtmp_qualities(self):
+        """获取可用的RTMP清晰度级别列表
+        
+        Returns:
+            list: 清晰度级别列表
+        """
+        return [
+            {
+                'level': level,
+                'name': config['name'],
+                'description': f"码率系数: {config['bitrate_factor']}x, CRF: {config['crf']}, 预设: {config['preset']}"
+            }
+            for level, config in self.rtmp_quality_configs.items()
+        ]
     
     # def process_custom(self,audiotype:int,idx:int):
     #     if self.curr_state!=audiotype: #从推理切到口播
