@@ -85,6 +85,16 @@ class BaseReal:
         self.video_frame_index = 0
         self.rtmp_initialized = False
         
+        # RTMP重连控制变量
+        self.rtmp_reconnect_count = 0
+        self.rtmp_max_reconnects = 5  # 最大重连次数
+        self.rtmp_last_reconnect_time = 0
+        self.rtmp_reconnect_delay = 5.0  # 重连延迟（秒）
+        self.rtmp_reconnect_backoff = 1.5  # 退避系数
+        self.rtmp_connection_failed = False
+        self.rtmp_url_in_use = None  # 当前使用的RTMP地址
+        self.rtmp_cleanup_timeout = 10.0  # 清理超时时间
+        
         # RTMP清晰度配置
         self.rtmp_quality_level = 'high'  # 默认高清
         self.rtmp_quality_configs = {
@@ -833,7 +843,11 @@ class BaseReal:
                 if not self.rtmp_initialized:
                     self._initialize_rtmp_with_frame(combine_frame, target_fps)
                 
-                if self.rtmp_initialized:
+                # 检查RTMP连接状态，如果连接彻底失败则跳过推流
+                if self.rtmp_connection_failed and self.rtmp_reconnect_count >= self.rtmp_max_reconnects:
+                    continue  # 跳过这一帧，避免无效操作
+                
+                if self.rtmp_initialized and not self.rtmp_connection_failed:
                     # 高效视频帧编码和推送
                     try:
                         # 获取当前队列大小用于自适应编码
@@ -862,15 +876,16 @@ class BaseReal:
                             self._log_rtmp_performance_stats()
                             
                     except (BrokenPipeError, ConnectionResetError, OSError) as e:
-                        logger.warning(f"RTMP 连接异常: {e}, 尝试重新初始化")
-                        self._update_rtmp_stats(False, False)  # 记录编码错误
-                        self._reinitialize_rtmp()
+                        self._handle_rtmp_connection_error(f"RTMP 连接异常: {e}")
                     except Exception as e:
-                        logger.warning(f"RTMP 视频编码/推送异常: {e}")
-                        self._update_rtmp_stats(False, False)  # 记录编码错误
-                        # 视频编码异常不影响音频推流，但检查是否需要重新初始化连接
-                        if "Broken pipe" in str(e) or "Connection reset" in str(e):
-                            self._reinitialize_rtmp()
+                        error_msg = str(e).lower()
+                        if "broken pipe" in error_msg or "connection reset" in error_msg or "connection refused" in error_msg:
+                            self._handle_rtmp_connection_error(f"RTMP 连接异常: {e}")
+                        else:
+                            # 其他编码异常，记录但不重连
+                            self._update_rtmp_stats(False, False)
+                            if self.rtmp_reconnect_count == 0:  # 只在首次出现时记录详细日志
+                                logger.warning(f"RTMP 视频编码异常: {e}")
             else: #webrtc
                 # 实时推流优化：确保图像质量和传输稳定性
                 image = combine_frame
@@ -908,7 +923,11 @@ class BaseReal:
                     audio_tmp.put(frame.tobytes()) #TODO
                 elif self.opt.transport=='rtmp':
                     # 优化的音频处理
-                    if self.rtmp_initialized:
+                    # 检查RTMP连接状态，如果连接彻底失败则跳过音频推流
+                    if self.rtmp_connection_failed and self.rtmp_reconnect_count >= self.rtmp_max_reconnects:
+                        continue  # 跳过音频处理，避免无效操作
+                    
+                    if self.rtmp_initialized and not self.rtmp_connection_failed:
                         success = self._optimize_audio_encoding(frame)
                         if not success:
                             # 音频编码失败时的处理
@@ -982,6 +1001,15 @@ class BaseReal:
         except Exception as e:
             logger.error(f"❌ RTMP推流资源预初始化失败: {e}")
     
+    def _check_rtmp_url_availability(self, rtmp_url):
+        """检查RTMP地址是否可用（避免重复推流）"""
+        # 检查是否已经在使用同一地址
+        if self.rtmp_url_in_use == rtmp_url:
+            logger.warning(f"⚠️ RTMP地址已在使用: {rtmp_url}")
+            return False
+            
+        return True
+    
     def _initialize_rtmp_with_frame(self, frame, fps):
         """使用首帧初始化RTMP推流，实现零延迟启动"""
         try:
@@ -992,10 +1020,16 @@ class BaseReal:
             self.rtmp_width = width
             self.rtmp_height = height
             
-            logger.info(f"🎬 使用首帧初始化RTMP推流: {width}x{height}@{fps}fps")
-            
             # 打开RTMP容器
             rtmp_url = getattr(self.opt, 'push_url', 'rtmp://localhost/live/stream')
+            
+            # 检查地址可用性
+            if not self._check_rtmp_url_availability(rtmp_url):
+                logger.error(f"❌ RTMP地址不可用，取消初始化: {rtmp_url}")
+                return
+            
+            logger.info(f"🎬 使用首帧初始化RTMP推流: {width}x{height}@{fps}fps")
+            logger.info(f"📍 占用RTMP地址: {rtmp_url}")
             self.rtmp_container = av.open(rtmp_url, 'w', format='flv')
             
             # 优化的视频编码参数配置
@@ -1073,6 +1107,12 @@ class BaseReal:
             self.video_frame_index = 0
             self.rtmp_initialized = True
             
+            # 记录当前使用的地址
+            self.rtmp_url_in_use = rtmp_url
+            
+            # 重置重连状态（连接成功后）
+            self._reset_rtmp_reconnect_state()
+            
             logger.info(f"✅ RTMP推流初始化成功: {rtmp_url}")
             logger.info(f"📹 视频参数: {width}x{height}@{fps}fps, 码率={bitrate}, CRF={crf}, 预设={preset}")
             logger.info(f"🎵 音频参数: AAC 44.1kHz 单声道 {audio_bitrate}")
@@ -1081,57 +1121,213 @@ class BaseReal:
         except Exception as e:
             logger.error(f"❌ RTMP推流初始化失败: {e}")
             self.rtmp_initialized = False
+            self.rtmp_connection_failed = True  # 标记连接失败
             self._cleanup_rtmp()
+    
+    def _handle_rtmp_connection_error(self, error_msg):
+        """处理RTMP连接错误，包含重连控制逻辑"""
+        import time
+        
+        current_time = time.time()
+        
+        # 检查是否超过最大重连次数
+        if self.rtmp_reconnect_count >= self.rtmp_max_reconnects:
+            if not self.rtmp_connection_failed:
+                logger.error(f"❌ RTMP重连次数已达上限({self.rtmp_max_reconnects})，执行完全重置")
+                # 参考/rtmp/stop接口的重置逻辑，执行完全重置
+                self._complete_rtmp_reset()
+            return
+        
+        # 检测连续快速失败（在很短时间内多次失败）
+        if (current_time - self.rtmp_last_reconnect_time < 2.0 and 
+            self.rtmp_reconnect_count >= 2):
+            # 连续快速失败，增加更长的冷却期
+            extended_delay = self.rtmp_reconnect_delay * 3
+            logger.warning(f"⚠️ 检测到连续快速失败，延长冷却期至 {extended_delay:.1f} 秒")
+            self.rtmp_reconnect_delay = extended_delay
+        
+        # 检查重连间隔
+        if current_time - self.rtmp_last_reconnect_time < self.rtmp_reconnect_delay:
+            return  # 还在冷却期，不执行重连
+        
+        # 执行重连
+        self.rtmp_reconnect_count += 1
+        self.rtmp_last_reconnect_time = current_time
+        
+        # 只在前几次重连时输出详细日志
+        if self.rtmp_reconnect_count <= 3:
+            logger.warning(f"🔄 {error_msg}，第{self.rtmp_reconnect_count}次重连尝试")
+        
+        self._update_rtmp_stats(False, False)
+        self._reinitialize_rtmp()
+        
+        # 增加重连延迟（指数退避），但设置上限
+        self.rtmp_reconnect_delay = min(
+            self.rtmp_reconnect_delay * self.rtmp_reconnect_backoff, 
+            30.0  # 最大延迟30秒
+        )
     
     def _reinitialize_rtmp(self):
         """重新初始化RTMP推流连接"""
+        import time
+        
         try:
-            logger.warning("🔄 检测到RTMP连接异常，尝试重新初始化")
-            
             # 记录重连统计
             self.rtmp_stats['reconnections'] += 1
             
-            self._cleanup_rtmp()
+            # 强制清理之前的连接，确保完全断开
+            logger.info("🔄 强制断开之前的RTMP连接")
+            self._cleanup_rtmp(force_cleanup=True)
+            
+            # 等待更长时间确保连接完全释放，特别是在连续失败的情况下
+            sleep_time = min(2.0 + (self.rtmp_reconnect_count * 0.5), 5.0)
+            time.sleep(sleep_time)
             
             # 重置初始化状态，等待下一帧触发重新初始化
             self.rtmp_initialized = False
             self.video_frame_index = 0
             
-            logger.info("✅ RTMP推流重新初始化准备完成")
+            # 重要：暂时重置连接失败状态，给重连一个机会
+            self.rtmp_connection_failed = False
+            
+            logger.info("✅ RTMP重连准备完成，等待下一帧触发重新初始化")
             
         except Exception as e:
             logger.error(f"❌ RTMP推流重新初始化失败: {e}")
             self.rtmp_stats['encoding_errors'] += 1
+            # 即使出错也要强制清理
+            self._cleanup_rtmp(force_cleanup=True)
+            # 标记连接失败
+            self.rtmp_connection_failed = True
     
-    def _cleanup_rtmp(self):
-        """清理RTMP推流资源"""
+    def _reset_rtmp_reconnect_state(self):
+        """重置RTMP重连状态（连接成功后调用）"""
+        if self.rtmp_reconnect_count > 0:
+            logger.info(f"🎉 RTMP连接恢复正常，重置重连状态（之前重连{self.rtmp_reconnect_count}次）")
+        
+        self.rtmp_reconnect_count = 0
+        self.rtmp_reconnect_delay = 5.0  # 重置为初始延迟
+        self.rtmp_connection_failed = False
+        self.rtmp_last_reconnect_time = 0
+    
+    def _complete_rtmp_reset(self):
+        """完全重置RTMP状态（参考/rtmp/stop接口的重置逻辑）"""
+        logger.warning("🔄 执行完全RTMP重置，参考stop接口逻辑")
+        
         try:
-            logger.info("🧹 开始清理RTMP推流资源")
+            # 1. 强制清理所有RTMP资源
+            self._cleanup_rtmp(force_cleanup=True)
             
-            # 发送结束包
-            if self.rtmp_initialized and self.vstream and self.astream:
+            # 2. 重置所有RTMP相关状态变量
+            self.rtmp_container = None
+            self.vstream = None
+            self.astream = None
+            self.audio_resampler = None
+            self.rtmp_width = 0
+            self.rtmp_height = 0
+            self.video_frame_index = 0
+            self.rtmp_initialized = False
+            
+            # 3. 重置重连控制变量到初始状态
+            self.rtmp_reconnect_count = 0
+            self.rtmp_max_reconnects = 5
+            self.rtmp_last_reconnect_time = 0
+            self.rtmp_reconnect_delay = 5.0
+            self.rtmp_reconnect_backoff = 1.5
+            self.rtmp_connection_failed = False
+            self.rtmp_url_in_use = None
+            
+            # 4. 重置统计信息
+            if hasattr(self, 'rtmp_stats'):
+                self.rtmp_stats = {
+                    'frames_sent': 0,
+                    'frames_dropped': 0,
+                    'audio_frames_sent': 0,
+                    'encoding_errors': 0,
+                    'reconnections': 0,
+                    'last_fps': 0,
+                    'avg_encoding_time': 0,
+                    'connection_start_time': 0
+                }
+            
+            logger.info("✅ RTMP完全重置完成，所有状态已恢复到初始状态")
+            
+        except Exception as e:
+            logger.error(f"❌ RTMP完全重置失败: {e}")
+            # 即使重置失败，也要确保关键状态被重置
+            self.rtmp_initialized = False
+            self.rtmp_connection_failed = True
+    
+    def reset_rtmp_connection(self):
+        """外部调用的RTMP连接重置方法（类似/rtmp/stop的效果）"""
+        logger.info("🔄 外部触发RTMP连接重置")
+        self._complete_rtmp_reset()
+        return {
+            'success': True,
+            'message': 'RTMP连接已完全重置，可以重新开始推流'
+        }
+    
+    def _cleanup_rtmp(self, force_cleanup=False):
+        """清理RTMP推流资源"""
+        import time
+        import threading
+        
+        try:
+            if force_cleanup:
+                logger.warning("🔥 强制清理RTMP推流资源")
+            else:
+                logger.info("🧹 开始清理RTMP推流资源")
+            
+            cleanup_start_time = time.time()
+            
+            # 发送结束包（优雅关闭）
+            if not force_cleanup and self.rtmp_initialized and self.vstream and self.astream:
                 try:
-                    # 刷新视频编码器
-                    for packet in self.vstream.encode(None):
-                        self.rtmp_container.mux(packet)
+                    # 设置超时机制
+                    def flush_encoders():
+                        try:
+                            # 刷新视频编码器
+                            for packet in self.vstream.encode(None):
+                                self.rtmp_container.mux(packet)
+                            
+                            # 刷新音频编码器
+                            for packet in self.astream.encode(None):
+                                self.rtmp_container.mux(packet)
+                        except Exception as e:
+                            logger.warning(f"编码器刷新异常: {e}")
                     
-                    # 刷新音频编码器
-                    for packet in self.astream.encode(None):
-                        self.rtmp_container.mux(packet)
+                    # 使用线程执行刷新，避免阻塞
+                    flush_thread = threading.Thread(target=flush_encoders, daemon=True)
+                    flush_thread.start()
+                    flush_thread.join(timeout=3.0)  # 最多等待3秒
+                    
+                    if flush_thread.is_alive():
+                        logger.warning("编码器刷新超时，强制继续清理")
                         
-                    logger.info("📤 RTMP编码器刷新完成")
                 except Exception as e:
                     logger.warning(f"RTMP编码器刷新异常: {e}")
             
-            # 关闭容器
+            # 强制关闭容器
             if self.rtmp_container:
                 try:
-                    self.rtmp_container.close()
-                    logger.info("📦 RTMP容器关闭完成")
+                    # 设置关闭超时
+                    def close_container():
+                        try:
+                            self.rtmp_container.close()
+                        except Exception as e:
+                            logger.warning(f"容器关闭异常: {e}")
+                    
+                    close_thread = threading.Thread(target=close_container, daemon=True)
+                    close_thread.start()
+                    close_thread.join(timeout=5.0)  # 最多等待5秒
+                    
+                    if close_thread.is_alive():
+                        logger.warning("RTMP容器关闭超时，强制释放资源")
+                    
                 except Exception as e:
                     logger.warning(f"RTMP容器关闭异常: {e}")
             
-            # 重置状态
+            # 强制重置所有状态
             self.rtmp_container = None
             self.vstream = None
             self.astream = None
@@ -1139,10 +1335,24 @@ class BaseReal:
             self.rtmp_initialized = False
             self.video_frame_index = 0
             
-            logger.info("✅ RTMP推流资源清理完成")
+            # 清理完成后释放地址占用
+            if self.rtmp_url_in_use:
+                logger.info(f"📍 释放RTMP地址占用: {self.rtmp_url_in_use}")
+                self.rtmp_url_in_use = None
+            
+            cleanup_time = time.time() - cleanup_start_time
+            logger.info(f"✅ RTMP推流资源清理完成 (耗时: {cleanup_time:.2f}秒)")
             
         except Exception as e:
             logger.error(f"❌ RTMP推流资源清理异常: {e}")
+            # 即使出错也要重置状态
+            self.rtmp_container = None
+            self.vstream = None
+            self.astream = None
+            self.audio_resampler = None
+            self.rtmp_initialized = False
+            self.video_frame_index = 0
+            self.rtmp_url_in_use = None
     
     def _get_adaptive_encoding_params(self, width, height, current_fps, queue_size=0):
         """根据分辨率、帧率和队列状态自适应调整编码参数"""

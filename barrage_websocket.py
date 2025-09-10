@@ -138,6 +138,8 @@ _LAST_ACTIVITY_TS = 0.0
 # 弹幕回复控制变量
 _REPLY_WINDOW_START = 0.0
 _REPLY_COUNT = 0
+# 自动停服请求标志：当检测到会话不存在时置为 True，并优雅退出进程
+STOP_REQUESTED = False
 
 def _safe_load_json(path: str) -> Dict[str, Any]:
     try:
@@ -358,6 +360,33 @@ def update_activity():
     global _LAST_ACTIVITY_TS
     _LAST_ACTIVITY_TS = time.time()
 
+def _is_session_invalid_response(response_text: str, sessionid: str) -> bool:
+    """检查 /human 返回是否表示会话不存在。
+    满足以下条件则判定为无效会话：
+    - code != 0
+    - msg 包含 'Session' 且包含 'not found' 且包含当前 sessionid 字符串
+    """
+    try:
+        r = json.loads(response_text)
+    except Exception:
+        return False
+    code = r.get('code', 0)
+    msg = str(r.get('msg', '') or '')
+    return (code != 0) and ('Session' in msg) and ('not found' in msg) and (str(sessionid) in msg)
+
+def _request_auto_stop(reason: str):
+    """请求自动停止本服务进程（子进程）。"""
+    global STOP_REQUESTED
+    if STOP_REQUESTED:
+        return
+    STOP_REQUESTED = True
+    logging.error(f"[自动停服] {reason}，将在 0.5 秒后退出弹幕转发进程")
+    try:
+        loop = asyncio.get_event_loop()
+        loop.call_later(0.5, lambda: os._exit(0))
+    except Exception:
+        os._exit(0)
+
 async def scheduler_loop(http_session: aiohttp.ClientSession, config: Dict[str, Any]):
     """内置调度：自动播报与冷场填充。
     修复：不使用 time % interval 方式，避免错过触发；增加详尽日志；冷场消息随机选择与防抖。
@@ -371,6 +400,10 @@ async def scheduler_loop(http_session: aiohttp.ClientSession, config: Dict[str, 
 
     while True:
         await asyncio.sleep(1)
+        # 若检测到会话无效触发的停服请求，则退出调度任务
+        if STOP_REQUESTED:
+            logging.info("检测到自动停服请求，退出调度任务")
+            break
         try:
             now = time.time()
 
@@ -490,6 +523,9 @@ async def _send_human_text(http_session: aiohttp.ClientSession, config: Dict[str
                                  str(response_json.get('code', '')),
                                  str(response_json.get('msg', '')),
                                  json.dumps(response_json, ensure_ascii=False))
+                    # 会话有效性监测：一旦检测到会话不存在，自动请求停服
+                    if _is_session_invalid_response(response_text, sessionid):
+                        _request_auto_stop(f"/human 返回无效会话: {response_json.get('msg','')}")
                 except json.JSONDecodeError:
                     logging.info("[/human成功] 响应:%s", response_text)
     except Exception as e:
@@ -1177,6 +1213,9 @@ async def _ws_maybe_dispatch(http_session: aiohttp.ClientSession, config: Dict[s
                         f"[/human成功] 代码:{response_json.get('code','')} | "
                         f"消息:{response_json.get('msg','')} | 会话ID:{sessionid}"
                     )
+                    # 会话有效性监测：一旦检测到会话不存在，自动请求停服
+                    if _is_session_invalid_response(response_text, sessionid):
+                        _request_auto_stop(f"/human 返回无效会话: {response_json.get('msg','')}")
                 except json.JSONDecodeError:
                     logging.info(f"[/human成功] 响应:{response_text} | 会话ID:{sessionid}")
         update_activity()
@@ -1229,15 +1268,30 @@ if __name__ == '__main__':
     WebSocket 弹幕监听服务
     
     使用方法:
-    python barrage_websocket.py --uri ws://localhost:8080/websocket --human_url http://localhost:8010/human
+    python barrage_websocket.py --uri ws://localhost:8012/websocket --human_url http://localhost:8010/human
     """
     # 初始化日志系统
     setup_logging()
     
     parser = argparse.ArgumentParser(description='WebSocket 弹幕监听服务')
-    parser.add_argument('--uri', default='ws://192.168.1.88:8080/websocket', type=str, help="WebSocket Server Uri")
+    parser.add_argument('--uri', default='ws://192.168.1.88:8012/websocket', type=str, help="WebSocket Server Uri")
     parser.add_argument('--human_url', default='http://192.168.2.43:8010/human', type=str, help='aiohttp服务 /human 接口地址')
-    parser.add_argument('--config', default='config/barrage_config.json', type=str, help='弹幕转发配置文件路径')
+    parser.add_argument('--config', default='config/barrage_config.json', type=str, help='弹幕转发配置文件路径（barrage_config）')
+    # 新增：会话隔离的三类外部配置路径
+    parser.add_argument('--speech', default=None, type=str, help='话术配置文件路径（speech_config）')
+    parser.add_argument('--sensitive', default=None, type=str, help='敏感词配置文件路径（sensitive_config）')
+    parser.add_argument('--schedule', default=None, type=str, help='定时任务配置文件路径（schedule_config）')
     args = parser.parse_args()
+
+    # 覆盖全局路径以启用会话隔离配置
+    # 注意：这些变量在 load_external_configs() 与 _config_watcher_loop() 中使用
+    if args.speech:
+        SPEECH_PATH = args.speech
+    if args.sensitive:
+        SENSITIVE_PATH = args.sensitive
+    if args.schedule:
+        SCHEDULE_PATH = args.schedule
+    if args.config:
+        BARRAGE_CFG_PATH = args.config
 
     asyncio.run(main(args.uri, args.human_url, args.config))

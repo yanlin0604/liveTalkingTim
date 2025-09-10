@@ -21,6 +21,8 @@ import uuid
 from threading import Thread, Event
 from logger import logger
 import time
+# 导入清空会话缓存的函数
+from llm import clear_maxkb_chat_cache, clear_unimed_chat_cache
 
 class RTMPAPI:
     """RTMP推流管理API"""
@@ -202,6 +204,14 @@ class RTMPAPI:
             
             # 清理nerfreal对象
             self.safe_del_nerfreal(sessionid)
+            
+            # 清空该sessionid的所有会话缓存
+            try:
+                clear_maxkb_chat_cache(sessionid)
+                clear_unimed_chat_cache(sessionid)
+                logger.info(f"已清空sessionid={sessionid}的会话缓存")
+            except Exception as cache_error:
+                logger.warning(f"清空会话缓存时出现警告: {cache_error}")
             
             # 更新会话状态
             session_info['status'] = 'stopped'
