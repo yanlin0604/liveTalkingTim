@@ -78,7 +78,7 @@ import gc
 
 app = Flask(__name__)
 #sockets = Sockets(app)
-nerfreals:Dict[int, BaseReal] = {} #sessionid:BaseReal
+nerfreals:Dict[str, BaseReal] = {} #sessionid:BaseReal
 opt = None
 model = None
 avatar = None
@@ -119,7 +119,7 @@ def randN(N)->int:
     max = pow(10, N)
     return random.randint(min, max - 1)
 
-def build_nerfreal(sessionid:int)->BaseReal:
+def build_nerfreal(sessionid:str)->BaseReal:
     print(f"=== 开始构建nerfreal，sessionid={sessionid} ===")
     print(f"opt.model = {opt.model}")
     print(f"opt.tts = {opt.tts}")

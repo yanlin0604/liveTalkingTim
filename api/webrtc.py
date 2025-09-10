@@ -120,6 +120,9 @@ class WebRTCAPI:
                   type: string
                   description: SDP类型（通常为'offer'）
                   default: offer
+                sessionid:
+                  type: string
+                  description: 可选的会话ID，如果不传则自动生成6位随机数。建议使用字符串格式以保留前导零
               required:
                 - sdp
                 - type
@@ -136,13 +139,13 @@ class WebRTCAPI:
                   type: string
                   description: SDP类型（'answer'）
                 sessionid:
-                  type: integer
+                  type: string
                   description: 分配的会话ID
         """
         try:
-            # 检查请求体是否为空
-            body = await request.text()
-            if not body.strip():
+            # 读取请求体
+            body_text = await request.text()
+            if not body_text.strip():
                 return web.Response(
                     content_type="application/json",
                     text=json.dumps(
@@ -150,7 +153,17 @@ class WebRTCAPI:
                     ),
                 )
             
-            params = await request.json()
+            # JSON解析
+            params = json.loads(body_text)
+            
+            # 如果sessionid存在且看起来像是被截断的数字（以0开头的长数字），尝试从原始文本中提取
+            if 'sessionid' in params and isinstance(params['sessionid'], int):
+                import re
+                # 在原始JSON文本中查找sessionid的原始值
+                original_match = re.search(r'"sessionid"\s*:\s*"?(0\d+)"?', body_text)
+                if original_match:
+                    params['sessionid'] = original_match.group(1)
+                    logger.info(f"🔧 检测到sessionid前导零丢失，已恢复为: {params['sessionid']}")
             
             # 验证必需参数
             if 'sdp' not in params:
@@ -185,22 +198,32 @@ class WebRTCAPI:
                 ),
             )
 
-        sessionid = randN(6)
+        # 获取sessionid参数，如果没有传入则生成随机数
+        # 确保sessionid为字符串类型，避免前导零丢失
+        sessionid = str(params.get('sessionid', randN(6)))
         
         logger.info(f"=== WebRTC连接建立开始 ===")
         logger.info(f"📋 会话ID: {sessionid}")
         logger.info(f"📊 当前会话数: {len(self.nerfreals)}")
-        logger.info(f"🔧 开始构建nerfreal实例...")
         
+        # 检查是否已存在该sessionid的会话实例
         with self.nerfreals_lock:
-            self.nerfreals[sessionid] = None
+            existing_nerfreal = self.nerfreals.get(sessionid)
         
-        nerfreal = await asyncio.get_event_loop().run_in_executor(None, self.build_nerfreal, sessionid)
-        
-        with self.nerfreals_lock:
-            self.nerfreals[sessionid] = nerfreal
-        
-        logger.info(f"✅ nerfreal实例构建完成 - 会话 {sessionid}")
+        if existing_nerfreal is not None:
+            logger.info(f"🔄 复用现有会话实例 - 会话 {sessionid}")
+            nerfreal = existing_nerfreal
+        else:
+            logger.info(f"🔧 开始构建新的nerfreal实例 - 会话 {sessionid}")
+            with self.nerfreals_lock:
+                self.nerfreals[sessionid] = None
+            
+            nerfreal = await asyncio.get_event_loop().run_in_executor(None, self.build_nerfreal, sessionid)
+            
+            with self.nerfreals_lock:
+                self.nerfreals[sessionid] = nerfreal
+            
+            logger.info(f"✅ nerfreal实例构建完成 - 会话 {sessionid}")
         
         logger.info(f"🌐 配置ICE服务器...")
         ice_server = RTCIceServer(urls='stun:stun.miwifi.com:3478')

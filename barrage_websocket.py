@@ -451,11 +451,11 @@ async def _send_startup_greeting(http_session: aiohttp.ClientSession, config: Di
     await _send_human_text(http_session, config, text, interrupt=False, msg_type='greeting')
 
 async def _send_human_text(http_session: aiohttp.ClientSession, config: Dict[str, Any], text: str, interrupt: bool, msg_type: Optional[str] = None):
-    # 优先按类型路由其 sessionid
+    # 优先按类型路由其 sessionid，确保为字符串类型
     if msg_type:
-        sessionid = (config.get('sessions') or {}).get(str(msg_type), config.get('default_sessionid', 0))
+        sessionid = str((config.get('sessions') or {}).get(str(msg_type), config.get('default_sessionid', 0)))
     else:
-        sessionid = config.get('default_sessionid', 0)
+        sessionid = str(config.get('default_sessionid', 0))
     payload = {
         "text": text,
         "type": "echo",
@@ -1146,7 +1146,7 @@ async def _ws_maybe_dispatch(http_session: aiohttp.ClientSession, config: Dict[s
     if text is None:
         return
 
-    sessionid = (config.get('sessions') or {}).get(msg_type, config.get('default_sessionid', 0))
+    sessionid = str((config.get('sessions') or {}).get(msg_type, config.get('default_sessionid', 0)))
     interrupt = bool(cfg.get('interrupt', False))
 
     payload = {

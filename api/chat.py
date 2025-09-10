@@ -49,9 +49,9 @@ class ChatAPI:
                   description: 是否打断当前说话
                   default: false
                 sessionid:
-                  type: integer
-                  description: 会话ID
-                  default: 0
+                  type: string
+                  description: 会话ID，建议使用字符串格式以保留前导零
+                  default: "0"
               required:
                 - text
                 - type
@@ -70,9 +70,9 @@ class ChatAPI:
         """
         try:
             logger.info("🌐 === 收到用户消息请求 ===")
-            # 检查请求体是否为空
-            body = await request.text()
-            if not body.strip():
+            # 读取请求体
+            body_text = await request.text()
+            if not body_text.strip():
                 return web.Response(
                     content_type="application/json",
                     text=json.dumps(
@@ -80,9 +80,22 @@ class ChatAPI:
                     ),
                 )
             
-            params = await request.json()
-
-            sessionid = params.get('sessionid', 0)
+            # JSON解析
+            params = json.loads(body_text)
+            
+            # 处理sessionid前导零丢失问题
+            raw_sessionid = params.get('sessionid', 0)
+            if isinstance(raw_sessionid, int) and raw_sessionid != 0:
+                import re
+                # 在原始JSON文本中查找sessionid的原始值
+                original_match = re.search(r'"sessionid"\s*:\s*"?(0\d+)"?', body_text)
+                if original_match:
+                    sessionid = original_match.group(1)
+                    logger.info(f"🔧 检测到sessionid前导零丢失，已恢复为: {sessionid}")
+                else:
+                    sessionid = str(raw_sessionid)
+            else:
+                sessionid = str(raw_sessionid)
             
             # 验证必需参数
             if 'text' not in params:
@@ -180,9 +193,9 @@ class ChatAPI:
             }
         """
         try:
-            # 检查请求体是否为空
-            body = await request.text()
-            if not body.strip():
+            # 读取请求体
+            body_text = await request.text()
+            if not body_text.strip():
                 return web.Response(
                     content_type="application/json",
                     text=json.dumps(
@@ -190,9 +203,22 @@ class ChatAPI:
                     ),
                 )
             
-            params = await request.json()
-
-            sessionid = params.get('sessionid', 0)
+            # JSON解析
+            params = json.loads(body_text)
+            
+            # 处理sessionid前导零丢失问题
+            raw_sessionid = params.get('sessionid', 0)
+            if isinstance(raw_sessionid, int) and raw_sessionid != 0:
+                import re
+                # 在原始JSON文本中查找sessionid的原始值
+                original_match = re.search(r'"sessionid"\s*:\s*"?(0\d+)"?', body_text)
+                if original_match:
+                    sessionid = original_match.group(1)
+                    logger.info(f"🔧 检测到sessionid前导零丢失，已恢复为: {sessionid}")
+                else:
+                    sessionid = str(raw_sessionid)
+            else:
+                sessionid = str(raw_sessionid)
             
             # 使用锁保护访问
             with self.nerfreals_lock:
@@ -248,7 +274,12 @@ class ChatAPI:
         """
         try:
             form = await request.post()
-            sessionid = int(form.get('sessionid', 0))
+            # 处理sessionid前导零丢失问题
+            raw_sessionid = form.get('sessionid', 0)
+            if isinstance(raw_sessionid, str) and raw_sessionid.startswith('0') and raw_sessionid.isdigit():
+                sessionid = raw_sessionid  # 保持字符串格式
+            else:
+                sessionid = str(raw_sessionid)
             
             fileobj = form["file"]
             filename = fileobj.filename
@@ -593,6 +624,16 @@ class ChatAPI:
                 )
             
             nerfreal = self.nerfreals[sessionid]
+            
+            # 检查nerfreal对象是否为None
+            if nerfreal is None:
+                return web.Response(
+                    content_type="application/json",
+                    text=json.dumps({
+                        "code": -1,
+                        "msg": f"Session {sessionid} nerfreal object is None"
+                    }),
+                )
         
         # 获取当前状态信息
         is_speaking = nerfreal.is_speaking()

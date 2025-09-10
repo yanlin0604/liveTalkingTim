@@ -21,7 +21,7 @@ class BarrageManager:
     def is_running(self) -> bool:
         return self.process is not None and self.process.returncode is None
 
-    async def start(self, sessionid: int) -> Dict:
+    async def start(self, sessionid: str) -> Dict:
         if self.is_running():
             return {"ok": False, "error": "Barrage service already running"}
 
@@ -32,7 +32,7 @@ class BarrageManager:
             with open(cfg_path, 'r', encoding='utf-8') as f:
                 cfg = json.load(f)
             self._original_default_sessionid = cfg.get('default_sessionid')
-            cfg['default_sessionid'] = int(sessionid)
+            cfg['default_sessionid'] = sessionid
             with open(cfg_path, 'w', encoding='utf-8') as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
             logger.info(f"已将 {cfg_path} 的 default_sessionid 设置为 {sessionid}")
@@ -59,7 +59,7 @@ class BarrageManager:
             return {"ok": False, "error": f"启动子进程失败: {e}"}
 
         self.started_at = time.time()
-        self.args = {'sessionid': int(sessionid)}
+        self.args = {'sessionid': sessionid}
         return {"ok": True, "pid": self.process.pid}
 
     async def status(self) -> Dict:
@@ -396,8 +396,24 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
         return web.json_response({"code": code, "msg": message, "data": {}})
 
     async def start_barrage(request: web.Request):
-        data = await request.json()
-        sessionid = int(data.get('sessionid'))
+        # 读取请求体并处理sessionid前导零问题
+        body_text = await request.text()
+        data = json.loads(body_text)
+        
+        # 处理sessionid前导零丢失问题
+        raw_sessionid = data.get('sessionid')
+        if isinstance(raw_sessionid, int) and raw_sessionid != 0:
+            import re
+            # 在原始JSON文本中查找sessionid的原始值
+            original_match = re.search(r'"sessionid"\s*:\s*"?(0\d+)"?', body_text)
+            if original_match:
+                sessionid = original_match.group(1)
+                logger.info(f"🔧 检测到sessionid前导零丢失，已恢复为: {sessionid}")
+            else:
+                sessionid = str(raw_sessionid)
+        else:
+            sessionid = str(raw_sessionid)
+            
         result = await barrage_manager.start(sessionid)
         if not result.get('ok'):
             return api_err(result.get('error', 'start failed'))

@@ -23,8 +23,8 @@ class UnimedProvider(BaseLLMProvider):
             nerfreal.put_msg_txt("抱歉，Unimed服务配置不完整。")
             return
         
-        # 获取 sessionid 用于会话缓存
-        sessionid = getattr(nerfreal, 'sessionid', 'default')
+        # 获取 sessionid 用于会话缓存，确保为字符串类型
+        sessionid = str(getattr(nerfreal, 'sessionid', 'default'))
         self.llm_logger.info("使用Unimed host=%s sessionid=%s msg_len=%d", ollama_host, sessionid, len(message or ""))
         
         try:

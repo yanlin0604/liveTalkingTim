@@ -24,8 +24,8 @@ class MaxKBProvider(BaseLLMProvider):
             nerfreal.put_msg_txt("抱歉，MaxKB服务配置不完整。")
             return
         
-        # 获取 sessionid 用于会话缓存
-        sessionid = getattr(nerfreal, 'sessionid', 'default')
+        # 获取 sessionid 用于会话缓存，确保为字符串类型
+        sessionid = str(getattr(nerfreal, 'sessionid', 'default'))
         self.llm_logger.info("使用MaxKB host=%s api_key=%s sessionid=%s msg_len=%d", ollama_host, llm_api_key[:10] + "...", sessionid, len(message or ""))
         
         try:
