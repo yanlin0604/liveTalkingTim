@@ -31,7 +31,8 @@ class BarrageManager:
             if p is None or p.returncode is not None:
                 # 先清理临时文件再删除记录
                 try:
-                    self._cleanup_session_files(info)
+                    # self._cleanup_session_files(info)
+                    pass
                 finally:
                     self.sessions.pop(sid, None)
 
@@ -83,7 +84,7 @@ class BarrageManager:
             logger.warning(f"写入会话配置失败: {out_path} | {e}")
 
     def _prepare_session_configs(self, sessionid: str) -> Dict[str, str]:
-        """为会话生成四类独立配置文件，返回路径映射。"""
+        """为会话生成四类独立配置文件，返回路径映射。存在则跳过，不存在才生成。"""
         dir_name = os.path.dirname(self.base_config_path) or 'config'
         os.makedirs(dir_name, exist_ok=True)
 
@@ -93,22 +94,37 @@ class BarrageManager:
             'sensitive': os.path.join(dir_name, f"sensitive_config.{sessionid}.json"),
             'schedule': os.path.join(dir_name, f"schedule_config.{sessionid}.json"),
         }
-        # 生成 barrage（带 default_sessionid）
-        barrage_path = self._make_session_config(sessionid)
-        paths['barrage'] = barrage_path
-        # 生成其余三个（复制或空对象）
-        self._copy_json_file(self.base_speech_path, paths['speech'], default_obj={
-            "templates": {"greeting": ["大家好，欢迎来到直播间！"], "fallback": ["这条消息我先跳过，继续看下一条～"]},
-            "reply_rules": [],
-            "gift_thanks": []
-        })
-        self._copy_json_file(self.base_sensitive_path, paths['sensitive'], default_obj={
-            "blacklist": [], "strategy": "mask", "mask_char": "*", "whitelist": []
-        })
-        self._copy_json_file(self.base_schedule_path, paths['schedule'], default_obj={
-            "auto_broadcast": {"enabled": False, "interval_sec": 180, "messages": []},
-            "idle_fill": {"enabled": False, "idle_threshold_sec": 60, "messages": []}
-        })
+        
+        # 检查配置文件是否已存在，只生成不存在的文件
+        files_to_generate = []
+        for config_type, path in paths.items():
+            if not os.path.exists(path):
+                files_to_generate.append(config_type)
+        
+        if files_to_generate:
+            logger.info(f"需要生成配置文件: {files_to_generate} | sessionid={sessionid}")
+            # 只生成不存在的配置文件
+            if 'barrage' in files_to_generate:
+                barrage_path = self._make_session_config(sessionid)
+                paths['barrage'] = barrage_path
+            if 'speech' in files_to_generate:
+                self._copy_json_file(self.base_speech_path, paths['speech'], default_obj={
+                    "templates": {"greeting": ["大家好，欢迎来到直播间！"], "fallback": ["这条消息我先跳过，继续看下一条～"]},
+                    "reply_rules": [],
+                    "gift_thanks": []
+                })
+            if 'sensitive' in files_to_generate:
+                self._copy_json_file(self.base_sensitive_path, paths['sensitive'], default_obj={
+                    "blacklist": [], "strategy": "mask", "mask_char": "*", "whitelist": []
+                })
+            if 'schedule' in files_to_generate:
+                self._copy_json_file(self.base_schedule_path, paths['schedule'], default_obj={
+                    "auto_broadcast": {"enabled": False, "interval_sec": 180, "messages": []},
+                    "idle_fill": {"enabled": False, "idle_threshold_sec": 60, "messages": []}
+                })
+        else:
+            logger.info(f"配置文件已存在，跳过生成 | sessionid={sessionid}")
+        
         return paths
 
     def _maybe_delete_file(self, path: Optional[str]):
@@ -188,7 +204,8 @@ class BarrageManager:
             pass
         # 进程退出后进行清理（若 stop() 已处理，以下操作将幂等）
         try:
-            self._cleanup_session_files(self.sessions.get(sessionid))
+            # self._cleanup_session_files(self.sessions.get(sessionid))
+            pass
         finally:
             self.sessions.pop(sessionid, None)
             logger.info(f"barrage 子进程已退出并完成清理 | sessionid={sessionid}")
@@ -309,7 +326,8 @@ class BarrageManager:
             ret = p.returncode if p else 0
             # 清理会话临时配置
             try:
-                self._cleanup_session_files(info)
+                # self._cleanup_session_files(info)
+                pass
             finally:
                 self.sessions.pop(sid, None)
             return {'ok': True, 'sessionid': sid, 'returncode': ret}
@@ -631,10 +649,10 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
         else:
             sessionid = str(raw_sessionid)
             # 在启动前清理孤儿配置（不影响当前运行中的会话配置）
-        try:
-            barrage_manager.cleanup_orphan_configs(exclude=set(barrage_manager.sessions.keys()))
-        except Exception as e:
-            logger.warning(f"清理孤儿配置时出错: {e}")
+        # try:
+        #     barrage_manager.cleanup_orphan_configs(exclude=set(barrage_manager.sessions.keys()))
+        # except Exception as e:
+        #     logger.warning(f"清理孤儿配置时出错: {e}")
 
         result = await barrage_manager.start(sessionid)
         if not result.get('ok'):
@@ -756,7 +774,32 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
         except Exception as e:
             return api_err(f"JSON解析失败: {e}")
         p = resolve_session_file(speech_file, sid)
-        ok, err = await write_json_file(p, data)
+        
+        # 如果传了sessionid且文件不存在，先从主文件复制生成
+        if sid and not os.path.exists(p):
+            logger.info(f"会话配置文件不存在，从主文件复制生成: {p}")
+            barrage_manager._copy_json_file(str(speech_file), str(p), default_obj={
+                "templates": {"greeting": ["大家好，欢迎来到直播间！"], "fallback": ["这条消息我先跳过，继续看下一条～"]},
+                "reply_rules": [],
+                "gift_thanks": []
+            })
+        
+        # 读取现有配置并合并更新，避免覆盖未传递的字段
+        ok, existing_data = await read_json_file(p)
+        if ok and isinstance(existing_data, dict):
+            # 深度合并配置
+            def deep_merge(base, update):
+                for key, value in update.items():
+                    if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                        deep_merge(base[key], value)
+                    else:
+                        base[key] = value
+                return base
+            merged_data = deep_merge(existing_data.copy(), data)
+        else:
+            merged_data = data
+        
+        ok, err = await write_json_file(p, merged_data)
         return api_ok({"saved": ok}) if ok else api_err(f"保存失败: {err}")
 
     async def reset_speech(request: web.Request):
@@ -784,7 +827,30 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
         except Exception as e:
             return api_err(f"JSON解析失败: {e}")
         p = resolve_session_file(sensitive_file, sid)
-        ok, err = await write_json_file(p, data)
+        
+        # 如果传了sessionid且文件不存在，先从主文件复制生成
+        if sid and not os.path.exists(p):
+            logger.info(f"会话配置文件不存在，从主文件复制生成: {p}")
+            barrage_manager._copy_json_file(str(sensitive_file), str(p), default_obj={
+                "blacklist": [], "strategy": "mask", "mask_char": "*", "whitelist": []
+            })
+        
+        # 读取现有配置并合并更新，避免覆盖未传递的字段
+        ok, existing_data = await read_json_file(p)
+        if ok and isinstance(existing_data, dict):
+            # 深度合并配置
+            def deep_merge(base, update):
+                for key, value in update.items():
+                    if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                        deep_merge(base[key], value)
+                    else:
+                        base[key] = value
+                return base
+            merged_data = deep_merge(existing_data.copy(), data)
+        else:
+            merged_data = data
+        
+        ok, err = await write_json_file(p, merged_data)
         return api_ok({"saved": ok}) if ok else api_err(f"保存失败: {err}")
 
     async def reset_sensitive(request: web.Request):
@@ -808,7 +874,31 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
         except Exception as e:
             return api_err(f"JSON解析失败: {e}")
         p = resolve_session_file(schedule_file, sid)
-        ok, err = await write_json_file(p, data)
+        
+        # 如果传了sessionid且文件不存在，先从主文件复制生成
+        if sid and not os.path.exists(p):
+            logger.info(f"会话配置文件不存在，从主文件复制生成: {p}")
+            barrage_manager._copy_json_file(str(schedule_file), str(p), default_obj={
+                "auto_broadcast": {"enabled": False, "interval_sec": 180, "messages": []},
+                "idle_fill": {"enabled": False, "idle_threshold_sec": 60, "messages": []}
+            })
+        
+        # 读取现有配置并合并更新，避免覆盖未传递的字段
+        ok, existing_data = await read_json_file(p)
+        if ok and isinstance(existing_data, dict):
+            # 深度合并配置
+            def deep_merge(base, update):
+                for key, value in update.items():
+                    if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                        deep_merge(base[key], value)
+                    else:
+                        base[key] = value
+                return base
+            merged_data = deep_merge(existing_data.copy(), data)
+        else:
+            merged_data = data
+        
+        ok, err = await write_json_file(p, merged_data)
         return api_ok({"saved": ok}) if ok else api_err(f"保存失败: {err}")
 
     async def reset_schedule_cfg(request: web.Request):
@@ -836,7 +926,42 @@ async def create_management_app(config_file: str = 'config.json', port: int = 80
         except Exception as e:
             return api_err(f"JSON解析失败: {e}")
         p = resolve_session_file(barrage_cfg_file, sid)
-        ok, err = await write_json_file(p, data)
+        
+        # 如果传了sessionid且文件不存在，先从主文件复制生成
+        if sid and not os.path.exists(p):
+            logger.info(f"会话配置文件不存在，从主文件复制生成: {p}")
+            # 对于barrage配置，需要特殊处理sessionid
+            try:
+                with open(barrage_cfg_file, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = {
+                    "human_url": "http://127.0.0.1:8010/human",
+                    "default_sessionid": 0,
+                    "types": {},
+                    "rules": {"global": {"min_len": 1, "max_len": 120, "rate_limit_per_min": 60}}
+                }
+            cfg['default_sessionid'] = sid
+            os.makedirs(os.path.dirname(p) or 'config', exist_ok=True)
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        
+        # 读取现有配置并合并更新，避免覆盖未传递的字段
+        ok, existing_data = await read_json_file(p)
+        if ok and isinstance(existing_data, dict):
+            # 深度合并配置
+            def deep_merge(base, update):
+                for key, value in update.items():
+                    if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                        deep_merge(base[key], value)
+                    else:
+                        base[key] = value
+                return base
+            merged_data = deep_merge(existing_data.copy(), data)
+        else:
+            merged_data = data
+        
+        ok, err = await write_json_file(p, merged_data)
         return api_ok({"saved": ok}) if ok else api_err(f"保存失败: {err}")
 
     async def reset_barrage_cfg(request: web.Request):
