@@ -637,15 +637,33 @@
                 if (result.code === 200) {
                     const qualityInfo = result.data.quality_info;
                     
+                    let bandwidthHtml = '';
+                    if (qualityInfo.bandwidth_info && Object.keys(qualityInfo.bandwidth_info).length > 0) {
+                        const bw = qualityInfo.bandwidth_info;
+                        bandwidthHtml = `
+                            <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+                            <strong>🌐 带宽统计信息:</strong><br>
+                            实时带宽: ${bw.instant_bandwidth || '0 KB/s'}<br>
+                            峰值带宽: ${bw.peak_bandwidth || '0 KB/s'}<br>
+                            平均带宽: ${bw.avg_bandwidth || '0 KB/s'}<br>
+                            运行时长: ${bw.runtime_formatted || '0秒'}<br>
+                            <strong>📦 数据传输:</strong><br>
+                            总数据量: ${bw.total_data_mb || 0} MB<br>
+                            视频数据: ${bw.video_data_mb || 0} MB (${bw.video_data_percentage || 0}%)<br>
+                            音频数据: ${bw.audio_data_mb || 0} MB (${bw.audio_data_percentage || 0}%)
+                        `;
+                    }
+                    
                     const infoDiv = document.createElement('div');
                     infoDiv.className = 'quality-info';
                     infoDiv.innerHTML = `
-                        <strong>当前清晰度信息:</strong><br>
+                        <strong>📊 当前清晰度信息:</strong><br>
                         清晰度级别: <span class="quality-badge quality-${qualityInfo.current_level}">${qualityInfo.current_name}</span><br>
                         视频码率: ${qualityInfo.actual_video_bitrate || '未知'}<br>
                         音频码率: ${qualityInfo.actual_audio_bitrate}<br>
                         分辨率: ${qualityInfo.resolution || '未知'}<br>
-                        推流状态: ${qualityInfo.is_streaming ? '正在推流' : '未推流'}
+                        推流状态: ${qualityInfo.is_streaming ? '🟢 正在推流' : '🔴 未推流'}
+                        ${bandwidthHtml}
                     `;
                     
                     const alertContainer = document.getElementById('alertContainer');
@@ -655,7 +673,7 @@
                         if (infoDiv.parentNode) {
                             infoDiv.parentNode.removeChild(infoDiv);
                         }
-                    }, 8000);
+                    }, 12000); // 延长显示时间以便查看带宽信息
                     
                 } else {
                     showAlert(`获取失败: ${result.message}`, 'error');
@@ -681,16 +699,70 @@
                 if (result.code === 200) {
                     const stats = result.data.stats;
                     
+                    // 构建带宽信息HTML
+                    let bandwidthHtml = '';
+                    if (stats.bandwidth_info) {
+                        const bw = stats.bandwidth_info;
+                        bandwidthHtml = `
+                            <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+                            <strong>🌐 带宽使用统计:</strong><br>
+                            实时带宽: ${bw.instant_bandwidth || '0 KB/s'}<br>
+                            峰值带宽: ${bw.peak_bandwidth || '0 KB/s'}<br>
+                            平均带宽: ${bw.avg_bandwidth || '0 KB/s'}<br>
+                            <strong>📦 数据传输详情:</strong><br>
+                            总数据量: ${bw.total_data_mb || 0} MB<br>
+                            视频数据: ${bw.video_data_mb || 0} MB (${bw.video_data_percentage || 0}%)<br>
+                            音频数据: ${bw.audio_data_mb || 0} MB (${bw.audio_data_percentage || 0}%)<br>
+                            总包数: ${bw.total_packets || 0}<br>
+                            视频包数: ${bw.video_packets || 0}<br>
+                            音频包数: ${bw.audio_packets || 0}
+                        `;
+                    }
+                    
+                    // 构建性能信息HTML
+                    let performanceHtml = '';
+                    if (stats.performance) {
+                        const perf = stats.performance;
+                        performanceHtml = `
+                            <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+                            <strong>⚡ 性能指标:</strong><br>
+                            平均帧率: ${perf.avg_fps || 0} FPS<br>
+                            帧率效率: ${perf.fps_efficiency || 0}%<br>
+                            编码错误率: ${stats.encoding_error_rate ? stats.encoding_error_rate.toFixed(2) : 0}%<br>
+                            音频错误率: ${stats.audio_error_rate ? stats.audio_error_rate.toFixed(2) : 0}%
+                        `;
+                    }
+                    
+                    // 构建清晰度信息HTML
+                    let qualityHtml = '';
+                    if (stats.quality_info) {
+                        const quality = stats.quality_info;
+                        qualityHtml = `
+                            <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+                            <strong>🎯 清晰度设置:</strong><br>
+                            当前级别: <span class="quality-badge quality-${quality.current_level}">${quality.current_name}</span><br>
+                            切换次数: ${quality.change_count || 0}<br>
+                            码率系数: ${quality.target_bitrate_factor}x<br>
+                            CRF值: ${quality.crf}<br>
+                            编码预设: ${quality.preset}
+                        `;
+                    }
+                    
                     const infoDiv = document.createElement('div');
                     infoDiv.className = 'stats-info';
                     infoDiv.innerHTML = `
-                        <strong>RTMP推流统计:</strong><br>
+                        <strong>📊 RTMP推流统计报告:</strong><br>
+                        运行时长: ${stats.runtime_formatted || '未知'}<br>
                         总帧数: ${stats.total_frames || 0}<br>
                         丢帧数: ${stats.dropped_frames || 0}<br>
                         丢帧率: ${stats.total_frames ? ((stats.dropped_frames || 0) / stats.total_frames * 100).toFixed(2) : 0}%<br>
-                        推流状态: ${stats.is_streaming ? '正在推流' : '未推流'}<br>
+                        推流状态: ${stats.is_streaming ? '🟢 正在推流' : '🔴 未推流'}<br>
                         分辨率: ${stats.resolution || '未知'}<br>
-                        目标帧率: ${stats.target_fps || '未知'} FPS
+                        目标帧率: ${stats.target_fps || '未知'} FPS<br>
+                        重连次数: ${stats.reconnections || 0}
+                        ${bandwidthHtml}
+                        ${performanceHtml}
+                        ${qualityHtml}
                     `;
                     
                     const alertContainer = document.getElementById('alertContainer');
@@ -700,7 +772,7 @@
                         if (infoDiv.parentNode) {
                             infoDiv.parentNode.removeChild(infoDiv);
                         }
-                    }, 8000);
+                    }, 15000); // 延长显示时间以便查看详细统计
                     
                 } else {
                     showAlert(`获取统计失败: ${result.message}`, 'error');

@@ -18,9 +18,9 @@
 from aiohttp import web
 import json
 import uuid
+import time
 from threading import Thread, Event
 from logger import logger
-import time
 # 导入清空会话缓存的函数
 from llm import clear_maxkb_chat_cache, clear_unimed_chat_cache
 
@@ -51,6 +51,41 @@ class RTMPAPI:
                 del self.nerfreals[sessionid]
                 return True
             return False
+    
+    def _update_session_status(self, sessionid):
+        """更新会话状态（检查线程是否还在运行）"""
+        if sessionid in self.rtmp_sessions:
+            session_info = self.rtmp_sessions[sessionid]
+            if session_info['status'] == 'running' and not session_info['thread'].is_alive():
+                session_info['status'] = 'stopped'
+                session_info['stop_time'] = time.time()
+    
+    def _get_session_data(self, sessionid, session_info):
+        """获取会话数据字典"""
+        return {
+            'sessionid': sessionid,
+            'push_url': session_info['push_url'],
+            'status': session_info['status'],
+            'start_time': session_info.get('start_time'),
+            'stop_time': session_info.get('stop_time'),
+            'thread_alive': session_info['thread'].is_alive() if session_info['thread'] else False
+        }
+    
+    def _create_error_response(self, code, message):
+        """创建错误响应"""
+        return web.json_response({
+            'code': code,
+            'message': message,
+            'data': None
+        })
+    
+    def _create_success_response(self, message, data):
+        """创建成功响应"""
+        return web.json_response({
+            'code': 200,
+            'message': message,
+            'data': data
+        })
 
     async def start_rtmp_stream(self, request):
         """启动RTMP推流
@@ -72,11 +107,7 @@ class RTMPAPI:
         # 获取推流地址，优先使用请求参数，否则使用配置默认值
         push_url = data.get('push_url', self.opt.push_url)
         if not push_url or not push_url.startswith('rtmp://'):
-            return web.json_response({
-                'code': 400,
-                'message': '无效的RTMP推流地址，必须以rtmp://开头',
-                'data': None
-            })
+            return self._create_error_response(400, '无效的RTMP推流地址，必须以rtmp://开头')
             
         # 获取或生成sessionid
         sessionid = data.get('sessionid')
@@ -103,11 +134,7 @@ class RTMPAPI:
             # 构建nerfreal对象
             nerfreal = self.build_nerfreal(sessionid)
             if nerfreal is None:
-                return web.json_response({
-                    'code': 500,
-                    'message': '构建数字人对象失败',
-                    'data': None
-                })
+                return self._create_error_response(500, '构建数字人对象失败')
                 
             # 设置推流地址
             nerfreal.opt.push_url = push_url
@@ -135,14 +162,10 @@ class RTMPAPI:
             
             logger.info(f"RTMP推流启动成功，sessionid={sessionid}, push_url={push_url}")
             
-            return web.json_response({
-                'code': 200,
-                'message': 'RTMP推流启动成功',
-                'data': {
-                    'sessionid': sessionid,
-                    'push_url': push_url,
-                    'status': 'running'
-                }
+            return self._create_success_response('RTMP推流启动成功', {
+                'sessionid': sessionid,
+                'push_url': push_url,
+                'status': 'running'
             })
             
         except Exception as e:
@@ -154,11 +177,7 @@ class RTMPAPI:
             if sessionid in self.rtmp_sessions:
                 del self.rtmp_sessions[sessionid]
                 
-            return web.json_response({
-                'code': 500,
-                'message': f'启动RTMP推流失败: {str(e)}',
-                'data': None
-            })
+            return self._create_error_response(500, f'启动RTMP推流失败: {str(e)}')
 
     async def stop_rtmp_stream(self, request):
         """停止RTMP推流
@@ -177,19 +196,11 @@ class RTMPAPI:
             
         sessionid = data.get('sessionid')
         if not sessionid:
-            return web.json_response({
-                'code': 400,
-                'message': '缺少sessionid参数',
-                'data': None
-            })
+            return self._create_error_response(400, '缺少sessionid参数')
             
         # 检查会话是否存在
         if sessionid not in self.rtmp_sessions:
-            return web.json_response({
-                'code': 404,
-                'message': f'推流会话 {sessionid} 不存在',
-                'data': None
-            })
+            return self._create_error_response(404, f'推流会话 {sessionid} 不存在')
             
         session_info = self.rtmp_sessions[sessionid]
         
@@ -219,24 +230,16 @@ class RTMPAPI:
             
             logger.info(f"RTMP推流停止成功，sessionid={sessionid}")
             
-            return web.json_response({
-                'code': 200,
-                'message': 'RTMP推流停止成功',
-                'data': {
-                    'sessionid': sessionid,
-                    'status': 'stopped'
-                }
+            return self._create_success_response('RTMP推流停止成功', {
+                'sessionid': sessionid,
+                'status': 'stopped'
             })
             
         except Exception as e:
             logger.error(f"停止RTMP推流失败: {e}")
             logger.exception("停止RTMP推流详细异常信息")
             
-            return web.json_response({
-                'code': 500,
-                'message': f'停止RTMP推流失败: {str(e)}',
-                'data': None
-            })
+            return self._create_error_response(500, f'停止RTMP推流失败: {str(e)}')
 
     async def get_rtmp_status(self, request):
         """获取RTMP推流状态
@@ -253,69 +256,30 @@ class RTMPAPI:
             if sessionid:
                 # 获取指定会话状态
                 if sessionid not in self.rtmp_sessions:
-                    return web.json_response({
-                        'code': 404,
-                        'message': f'推流会话 {sessionid} 不存在',
-                        'data': None
-                    })
+                    return self._create_error_response(404, f'推流会话 {sessionid} 不存在')
                     
                 session_info = self.rtmp_sessions[sessionid]
+                self._update_session_status(sessionid)
+                session_data = self._get_session_data(sessionid, session_info)
                 
-                # 检查线程是否还在运行
-                if session_info['status'] == 'running' and not session_info['thread'].is_alive():
-                    session_info['status'] = 'stopped'
-                    session_info['stop_time'] = time.time()
-                    
-                session_data = {
-                    'sessionid': sessionid,
-                    'push_url': session_info['push_url'],
-                    'status': session_info['status'],
-                    'start_time': session_info.get('start_time'),
-                    'stop_time': session_info.get('stop_time'),
-                    'thread_alive': session_info['thread'].is_alive() if session_info['thread'] else False
-                }
-                
-                return web.json_response({
-                    'code': 200,
-                    'message': '获取推流状态成功',
-                    'data': session_data
-                })
+                return self._create_success_response('获取推流状态成功', session_data)
             else:
                 # 获取所有会话状态
                 sessions = []
                 for sid, session_info in self.rtmp_sessions.items():
-                    # 检查线程是否还在运行
-                    if session_info['status'] == 'running' and not session_info['thread'].is_alive():
-                        session_info['status'] = 'stopped'
-                        session_info['stop_time'] = time.time()
-                        
-                    sessions.append({
-                        'sessionid': sid,
-                        'push_url': session_info['push_url'],
-                        'status': session_info['status'],
-                        'start_time': session_info.get('start_time'),
-                        'stop_time': session_info.get('stop_time'),
-                        'thread_alive': session_info['thread'].is_alive() if session_info['thread'] else False
-                    })
+                    self._update_session_status(sid)
+                    sessions.append(self._get_session_data(sid, session_info))
                     
-                return web.json_response({
-                    'code': 200,
-                    'message': '获取推流状态成功',
-                    'data': {
-                        'sessions': sessions,
-                        'total': len(sessions)
-                    }
+                return self._create_success_response('获取推流状态成功', {
+                    'sessions': sessions,
+                    'total': len(sessions)
                 })
                 
         except Exception as e:
             logger.error(f"获取RTMP推流状态失败: {e}")
             logger.exception("获取RTMP推流状态详细异常信息")
             
-            return web.json_response({
-                'code': 500,
-                'message': f'获取推流状态失败: {str(e)}',
-                'data': None
-            })
+            return self._create_error_response(500, f'获取推流状态失败: {str(e)}')
 
     async def list_rtmp_sessions(self, request):
         """列出所有RTMP推流会话
@@ -326,41 +290,24 @@ class RTMPAPI:
         try:
             sessions = []
             for sessionid, session_info in self.rtmp_sessions.items():
-                # 检查线程是否还在运行
-                if session_info['status'] == 'running' and not session_info['thread'].is_alive():
-                    session_info['status'] = 'stopped'
-                    session_info['stop_time'] = time.time()
-                    
-                sessions.append({
-                    'sessionid': sessionid,
-                    'push_url': session_info['push_url'],
-                    'status': session_info['status'],
-                    'start_time': session_info.get('start_time'),
-                    'stop_time': session_info.get('stop_time'),
-                    'duration': time.time() - session_info['start_time'] if session_info['status'] == 'running' else 
-                               (session_info.get('stop_time', time.time()) - session_info['start_time'])
-                })
+                self._update_session_status(sessionid)
+                session_data = self._get_session_data(sessionid, session_info)
+                session_data['duration'] = time.time() - session_info['start_time'] if session_info['status'] == 'running' else \
+                                         (session_info.get('stop_time', time.time()) - session_info['start_time'])
+                sessions.append(session_data)
                 
-            return web.json_response({
-                'code': 200,
-                'message': '获取推流会话列表成功',
-                'data': {
-                    'sessions': sessions,
-                    'total': len(sessions),
-                    'running': len([s for s in sessions if s['status'] == 'running']),
-                    'stopped': len([s for s in sessions if s['status'] == 'stopped'])
-                }
+            return self._create_success_response('获取推流会话列表成功', {
+                'sessions': sessions,
+                'total': len(sessions),
+                'running': len([s for s in sessions if s['status'] == 'running']),
+                'stopped': len([s for s in sessions if s['status'] == 'stopped'])
             })
             
         except Exception as e:
             logger.error(f"获取RTMP推流会话列表失败: {e}")
             logger.exception("获取RTMP推流会话列表详细异常信息")
             
-            return web.json_response({
-                'code': 500,
-                'message': f'获取推流会话列表失败: {str(e)}',
-                'data': None
-            })
+            return self._create_error_response(500, f'获取推流会话列表失败: {str(e)}')
 
     async def set_rtmp_quality(self, request):
         """设置RTMP推流清晰度
@@ -368,6 +315,7 @@ class RTMPAPI:
         请求参数:
         - sessionid: 推流会话ID
         - quality: 清晰度级别 ('ultra', 'high', 'medium', 'low')
+        - force_restart: 是否强制重启连接 (可选，默认false)
         
         返回:
         - sessionid: 推流会话ID
@@ -380,58 +328,51 @@ class RTMPAPI:
             
         sessionid = data.get('sessionid')
         quality_level = data.get('quality')
+        force_restart = data.get('force_restart', False)
         
         if not sessionid:
-            return web.json_response({
-                'code': 400,
-                'message': '缺少sessionid参数',
-                'data': None
-            })
+            return self._create_error_response(400, '缺少sessionid参数')
             
         if not quality_level:
-            return web.json_response({
-                'code': 400,
-                'message': '缺少quality参数',
-                'data': None
-            })
+            return self._create_error_response(400, '缺少quality参数')
             
         # 获取nerfreal对象
         nerfreal = self.safe_get_nerfreal(sessionid)
         if not nerfreal:
-            return web.json_response({
-                'code': 404,
-                'message': f'推流会话 {sessionid} 不存在或未启动',
-                'data': None
-            })
+            return self._create_error_response(404, f'推流会话 {sessionid} 不存在或未启动')
             
         try:
+            # 如果强制重启，先停止当前推流再启动
+            if force_restart and hasattr(nerfreal, 'rtmp_initialized') and nerfreal.rtmp_initialized:
+                logger.info(f"强制重启RTMP推流，sessionid={sessionid}")
+                
+                # 停止当前推流
+                nerfreal._cleanup_rtmp(force_cleanup=True)
+                
+                # 等待清理完成
+                time.sleep(1.0)
+                
+                # 重新启动推流
+                if hasattr(nerfreal, 'opt') and nerfreal.opt.push_url:
+                    nerfreal.rtmp_initialized = False
+                    # 下一帧会自动重新初始化
+            
             # 调用BaseReal的清晰度设置方法
             result = nerfreal.set_rtmp_quality(quality_level)
             
             if result['success']:
                 logger.info(f"RTMP清晰度设置成功，sessionid={sessionid}, quality={quality_level}")
-                return web.json_response({
-                    'code': 200,
-                    'message': result['message'],
-                    'data': {
-                        'sessionid': sessionid,
-                        'quality_info': result
-                    }
+                return self._create_success_response(result['message'], {
+                    'sessionid': sessionid,
+                    'quality_info': result,
+                    'force_restart': force_restart
                 })
             else:
-                return web.json_response({
-                    'code': 400,
-                    'message': result['message'],
-                    'data': None
-                })
+                return self._create_error_response(400, result['message'])
                 
         except Exception as e:
             logger.error(f"设置RTMP清晰度失败: {e}")
-            return web.json_response({
-                'code': 500,
-                'message': f'设置清晰度失败: {str(e)}',
-                'data': None
-            })
+            return self._create_error_response(500, f'设置清晰度失败: {str(e)}')
 
     async def get_rtmp_quality(self, request):
         """获取RTMP推流清晰度信息
@@ -449,21 +390,13 @@ class RTMPAPI:
                 # 获取指定会话的清晰度信息
                 nerfreal = self.safe_get_nerfreal(sessionid)
                 if not nerfreal:
-                    return web.json_response({
-                        'code': 404,
-                        'message': f'推流会话 {sessionid} 不存在或未启动',
-                        'data': None
-                    })
+                    return self._create_error_response(404, f'推流会话 {sessionid} 不存在或未启动')
                     
                 quality_info = nerfreal.get_rtmp_quality_info()
                 
-                return web.json_response({
-                    'code': 200,
-                    'message': '获取清晰度信息成功',
-                    'data': {
-                        'sessionid': sessionid,
-                        'quality_info': quality_info
-                    }
+                return self._create_success_response('获取清晰度信息成功', {
+                    'sessionid': sessionid,
+                    'quality_info': quality_info
                 })
             else:
                 # 返回可用的清晰度级别（使用临时对象获取配置）
@@ -473,27 +406,15 @@ class RTMPAPI:
                     # 清理临时对象
                     del temp_nerfreal
                     
-                    return web.json_response({
-                        'code': 200,
-                        'message': '获取可用清晰度级别成功',
-                        'data': {
-                            'available_qualities': available_qualities
-                        }
+                    return self._create_success_response('获取可用清晰度级别成功', {
+                        'available_qualities': available_qualities
                     })
                 else:
-                    return web.json_response({
-                        'code': 500,
-                        'message': '无法获取清晰度配置',
-                        'data': None
-                    })
+                    return self._create_error_response(500, '无法获取清晰度配置')
                     
         except Exception as e:
             logger.error(f"获取RTMP清晰度信息失败: {e}")
-            return web.json_response({
-                'code': 500,
-                'message': f'获取清晰度信息失败: {str(e)}',
-                'data': None
-            })
+            return self._create_error_response(500, f'获取清晰度信息失败: {str(e)}')
 
     async def get_rtmp_stats(self, request):
         """获取RTMP推流统计信息
@@ -508,37 +429,22 @@ class RTMPAPI:
             sessionid = request.query.get('sessionid')
             
             if not sessionid:
-                return web.json_response({
-                    'code': 400,
-                    'message': '缺少sessionid参数',
-                    'data': None
-                })
+                return self._create_error_response(400, '缺少sessionid参数')
                 
             # 获取nerfreal对象
             nerfreal = self.safe_get_nerfreal(sessionid)
             if not nerfreal:
-                return web.json_response({
-                    'code': 404,
-                    'message': f'推流会话 {sessionid} 不存在或未启动',
-                    'data': None
-                })
+                return self._create_error_response(404, f'推流会话 {sessionid} 不存在或未启动')
                 
             # 获取RTMP统计信息
             stats = nerfreal.get_rtmp_stats()
             
-            return web.json_response({
-                'code': 200,
-                'message': '获取推流统计信息成功',
-                'data': {
-                    'sessionid': sessionid,
-                    'stats': stats
-                }
+            return self._create_success_response('获取推流统计信息成功', {
+                'sessionid': sessionid,
+                'stats': stats
             })
             
         except Exception as e:
             logger.error(f"获取RTMP推流统计信息失败: {e}")
-            return web.json_response({
-                'code': 500,
-                'message': f'获取推流统计信息失败: {str(e)}',
-                'data': None
-            })
+            return self._create_error_response(500, f'获取推流统计信息失败: {str(e)}')
+
