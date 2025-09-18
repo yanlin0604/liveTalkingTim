@@ -52,7 +52,7 @@ llm_logger = _setup_llm_logger()
 def llm_response(message, nerfreal: BaseReal):
     """
     LLM响应函数，支持多种LLM提供商
-    支持的提供商：dashscope（阿里云）、ollama（本地）、maxkb（MaxKB知识库）、unimed（Unimed知识库）
+    支持的提供商：dashscope（阿里云）、ollama（本地）、maxkb（MaxKB知识库）、unimed（Unimed知识库）、dify（Dify知识库）
     """
     start = time.perf_counter()
     logger.info(f" === LLM响应开始 ===")
@@ -96,3 +96,9 @@ def clear_unimed_chat_cache(sessionid=None):
     """清除Unimed会话缓存（兼容性函数）"""
     from llm_providers.unimed_provider import UnimedProvider
     UnimedProvider.clear_chat_cache(sessionid)
+
+
+def clear_dify_chat_cache(sessionid=None):
+    """清除Dify会话缓存（兼容性函数）"""
+    from llm_providers.dify_provider import DifyProvider
+    DifyProvider.clear_chat_cache(sessionid)
