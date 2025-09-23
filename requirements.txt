@@ -54,3 +54,4 @@ av
 aiohttp
 rsocket
 reactivestreams
+gradio_client

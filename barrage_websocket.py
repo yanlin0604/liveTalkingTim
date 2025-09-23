@@ -141,6 +141,10 @@ _REPLY_COUNT = 0
 # 自动停服请求标志：当检测到会话不存在时置为 True，并优雅退出进程
 STOP_REQUESTED = False
 
+# 当前说话状态跟踪变量
+_CURRENT_SPEAKING_TYPE = None  # 记录当前说话内容的类型：'barrage_reply'（弹幕回复）或 'scheduled'（定时播放）
+_LAST_BARRAGE_REPLY_TIME = 0.0  # 上次弹幕回复的时间戳
+
 def _safe_load_json(path: str) -> Dict[str, Any]:
     try:
         if os.path.exists(path):
@@ -441,7 +445,23 @@ async def scheduler_loop(http_session: aiohttp.ClientSession, config: Dict[str, 
                     auto_interrupt = bool(auto_cfg.get('interrupt', False))
                     auto_type = auto_cfg.get('msg_type')
                     logging.info(f"[定时-自动播报] 触发 | 间隔:{interval}s | 文本:{str(msg)[:50]}")
-                    await _send_human_text(http_session, config, str(msg), interrupt=auto_interrupt, msg_type=auto_type)
+                    
+                    # 检查是否需要延迟：当前正在说弹幕回复内容时延迟定时播放
+                    should_delay = await _should_delay_scheduled_content(http_session, config)
+                    if should_delay:
+                        logging.info(f"[定时-自动播报] 延迟发送，当前正在回复弹幕，等待1-2秒")
+                        await asyncio.sleep(random.uniform(1.0, 2.0))
+                        # 再次检查，如果仍在说话则继续等待
+                        retry_count = 0
+                        while retry_count < 3:
+                            still_speaking = await _should_delay_scheduled_content(http_session, config)
+                            if not still_speaking:
+                                break
+                            logging.info(f"[定时-自动播报] 仍在说话，继续等待1秒 (重试{retry_count+1}/3)")
+                            await asyncio.sleep(1.0)
+                            retry_count += 1
+                    
+                    await _send_human_text(http_session, config, str(msg), interrupt=auto_interrupt, msg_type=auto_type, content_source='scheduled')
                     last_auto_ts = now
                     update_activity()
 
@@ -457,7 +477,23 @@ async def scheduler_loop(http_session: aiohttp.ClientSession, config: Dict[str, 
                     except Exception:
                         msg = idle_cfg['messages'][0]
                     logging.info(f"[定时-冷场填充] 触发 | 静默≥{th}s | 文本:{str(msg)[:50]}")
-                    await _send_human_text(http_session, config, str(msg), interrupt=idle_interrupt, msg_type=idle_type)
+                    
+                    # 检查是否需要延迟：当前正在说弹幕回复内容时延迟冷场填充
+                    should_delay = await _should_delay_scheduled_content(http_session, config)
+                    if should_delay:
+                        logging.info(f"[定时-冷场填充] 延迟发送，当前正在回复弹幕，等待1-2秒")
+                        await asyncio.sleep(random.uniform(1.0, 2.0))
+                        # 再次检查，如果仍在说话则继续等待
+                        retry_count = 0
+                        while retry_count < 3:
+                            still_speaking = await _should_delay_scheduled_content(http_session, config)
+                            if not still_speaking:
+                                break
+                            logging.info(f"[定时-冷场填充] 仍在说话，继续等待1秒 (重试{retry_count+1}/3)")
+                            await asyncio.sleep(1.0)
+                            retry_count += 1
+                    
+                    await _send_human_text(http_session, config, str(msg), interrupt=idle_interrupt, msg_type=idle_type, content_source='scheduled')
                     last_idle_sent_ts = now
                     update_activity()
         except Exception as e:
@@ -481,14 +517,46 @@ async def _send_startup_greeting(http_session: aiohttp.ClientSession, config: Di
         return
     
     logging.info(f"[启动问候] 发送问候语: {text}")
-    await _send_human_text(http_session, config, text, interrupt=False, msg_type='greeting')
+    await _send_human_text(http_session, config, text, interrupt=False, msg_type='greeting', content_source='scheduled')
 
-async def _send_human_text(http_session: aiohttp.ClientSession, config: Dict[str, Any], text: str, interrupt: bool, msg_type: Optional[str] = None):
+async def check_is_speaking(http_session: aiohttp.ClientSession, config: Dict[str, Any], sessionid: str) -> bool:
+    """检查指定会话是否正在说话"""
+    try:
+        # 构建is_speaking接口URL
+        human_url = config.get('human_url', 'http://127.0.0.1:8010')
+        base_url = human_url.replace('/human', '')
+        is_speaking_url = f"{base_url}/is_speaking"
+        
+        payload = {"sessionid": int(sessionid)}
+        
+        async with http_session.post(is_speaking_url, json=payload, timeout=5) as resp:
+            if resp.status == 200:
+                response_data = await resp.json()
+                if response_data.get('code') == 0:
+                    return response_data.get('data', {}).get('is_speaking', False)
+            
+            logging.warning(f"[is_speaking检查] 接口调用失败，状态码: {resp.status}")
+            return False
+    except Exception as e:
+        logging.warning(f"[is_speaking检查] 调用异常: {e}")
+        return False
+
+async def _send_human_text(http_session: aiohttp.ClientSession, config: Dict[str, Any], text: str, interrupt: bool, msg_type: Optional[str] = None, content_source: Optional[str] = None):
+    global _CURRENT_SPEAKING_TYPE, _LAST_BARRAGE_REPLY_TIME
+    
     # 优先按类型路由其 sessionid，确保为字符串类型
     if msg_type:
         sessionid = str((config.get('sessions') or {}).get(str(msg_type), config.get('default_sessionid', 0)))
     else:
         sessionid = str(config.get('default_sessionid', 0))
+    
+    # 记录当前说话内容的类型
+    if content_source == 'barrage_reply':
+        _CURRENT_SPEAKING_TYPE = 'barrage_reply'
+        _LAST_BARRAGE_REPLY_TIME = time.time()
+    elif content_source == 'scheduled':
+        _CURRENT_SPEAKING_TYPE = 'scheduled'
+    
     payload = {
         "text": text,
         "type": "echo",
@@ -1094,6 +1162,38 @@ async def ws_listen(websocket_uri: str, human_url: str, config_path: Optional[st
             logging.error(f"WS 连接失败: {e}")
 
 
+async def _should_delay_scheduled_content(http_session: aiohttp.ClientSession, config: Dict[str, Any]) -> bool:
+    """判断是否应该延迟定时播放内容
+    
+    返回True表示需要延迟，条件：
+    1. 当前正在说话
+    2. 且当前说话的内容是弹幕回复（而非定时播放）
+    3. 且距离上次弹幕回复时间不超过10秒（避免长时间阻塞）
+    """
+    global _CURRENT_SPEAKING_TYPE, _LAST_BARRAGE_REPLY_TIME
+    
+    # 如果当前没有标记为弹幕回复，不需要延迟
+    if _CURRENT_SPEAKING_TYPE != 'barrage_reply':
+        return False
+    
+    # 如果距离上次弹幕回复时间超过10秒，不再延迟（避免长时间阻塞）
+    if time.time() - _LAST_BARRAGE_REPLY_TIME > 10.0:
+        logging.info(f"[延迟检查] 距离上次弹幕回复超过10秒，不再延迟定时播放")
+        _CURRENT_SPEAKING_TYPE = None
+        return False
+    
+    # 获取默认sessionid来检查是否正在说话
+    sessionid = str(config.get('default_sessionid', 0))
+    is_speaking = await check_is_speaking(http_session, config, sessionid)
+    
+    if is_speaking:
+        logging.info(f"[延迟检查] 当前正在说弹幕回复内容，延迟定时播放")
+        return True
+    else:
+        # 如果不在说话了，清除当前说话类型标记
+        _CURRENT_SPEAKING_TYPE = None
+        return False
+
 async def _ws_maybe_dispatch(http_session: aiohttp.ClientSession, config: Dict[str, Any], msg_dto: Dict[str, Any]):
     msg_type = msg_dto.get('type', '')
     cfg = get_type_cfg(config, msg_type)
@@ -1197,6 +1297,11 @@ async def _ws_maybe_dispatch(http_session: aiohttp.ClientSession, config: Dict[s
         f"会话ID:{sessionid} | 打断:{interrupt} | 动作:{payload.get('type','')} | "
         f"文本:{text[:50]}{'...' if len(text) > 50 else ''}"
     )
+    
+    # 标记这是弹幕回复内容
+    global _CURRENT_SPEAKING_TYPE, _LAST_BARRAGE_REPLY_TIME
+    _CURRENT_SPEAKING_TYPE = 'barrage_reply'
+    _LAST_BARRAGE_REPLY_TIME = time.time()
     
     try:
         async with http_session.post(config.get('human_url'), json=payload, timeout=10) as resp:

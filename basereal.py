@@ -39,7 +39,7 @@ from av.audio.resampler import AudioResampler
 import av
 from fractions import Fraction
 
-from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS,DoubaoTTS
+from ttsreal import EdgeTTS,SovitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS,DoubaoTTS,IndexTTS2
 from logger import logger
 
 from tqdm import tqdm
@@ -163,6 +163,9 @@ class BaseReal:
             elif opt.tts == "doubao":
                 logger.info("初始化DoubaoTTS")
                 self.tts = DoubaoTTS(opt,self)
+            elif opt.tts == "indextts2":
+                logger.info("初始化IndexTTS2")
+                self.tts = IndexTTS2(opt,self)
             else:
                 logger.error(f"未知的TTS类型: {opt.tts}")
                 logger.error("可用的TTS类型: edgetts, gpt-sovits, xtts, cosyvoice, fishtts, tencent, doubao")

@@ -292,16 +292,7 @@ class FishTTS(BaseTTS):
 
 ###########################################################################################
 class SovitsTTS(BaseTTS):
-    def __init__(self, opt, parent):
-        super().__init__(opt, parent)
-        # 固定语速（1.0为原速）；你可以直接改这一行数字来全局调节 gpt-sovits 的语速
-        # 改为从动态配置获取，键名：tts_speed；若未配置则回退到 1.0
-        try:
-            self.speed = float(get_config('tts_speed', 1.0))
-        except Exception:
-            self.speed = 1.0
-        logger.info("[SovitsTTS] 初始化语速，来自配置 tts_speed=%.3f", self.speed)
-    def txt_to_audio(self,msg): 
+    def txt_to_audio(self,msg:tuple[str, dict]): 
         text,textevent = msg
         self.stream_tts(
             self.gpt_sovits(
@@ -316,6 +307,18 @@ class SovitsTTS(BaseTTS):
 
     def gpt_sovits(self, text, reffile, reftext,language, server_url) -> Iterator[bytes]:
         start = time.perf_counter()
+        # 动态获取语速配置
+        speed_factor = getattr(self, 'speed', 1.0)
+        
+        # 打印请求参数
+        logger.info(f"GPT-SoVITS 请求参数:")
+        logger.info(f"  文本: {text[:50]}{'...' if len(text) > 50 else ''}")
+        logger.info(f"  参考音频: {reffile}")
+        logger.info(f"  参考文本: {reftext}")
+        logger.info(f"  语言: {language}")
+        logger.info(f"  服务器地址: {server_url}")
+        logger.info(f"  语速因子: {speed_factor}")
+        
         req={
             'text':text,
             'text_lang':language,
@@ -323,13 +326,14 @@ class SovitsTTS(BaseTTS):
             'prompt_text':reftext,
             'prompt_lang':language,
             'media_type':'ogg',
-            'streaming_mode':True
+            'streaming_mode':True,
+            'speed_factor': speed_factor
         }
         # req["text"] = text
         # req["text_language"] = language
         # req["character"] = character
         # req["emotion"] = emotion
-        # #req["stream_chunk_size"] = stream_chunk_size  # you can reduce it to get faster response, but degrade quality
+        # #req["stream_chunk_size"] = stream_chunk_size  # 可以减少此值以获得更快响应，但会降低质量
         # req["streaming_mode"] = True
         try:
             res = requests.post(
@@ -338,126 +342,65 @@ class SovitsTTS(BaseTTS):
                 stream=True,
             )
             end = time.perf_counter()
-            logger.info(f"gpt_sovits Time to make POST: {end-start}s")
+            logger.info(f"GPT-SoVITS POST请求耗时: {end-start}s")
 
             if res.status_code != 200:
-                logger.error("Error:%s", res.text)
+                logger.error("错误:%s", res.text)
                 return
                 
             first = True
         
             for chunk in res.iter_content(chunk_size=None): #12800 1280 32K*20ms*2
-                logger.info('chunk len:%d',len(chunk))
+                logger.info('音频块长度:%d',len(chunk))
                 if first:
                     end = time.perf_counter()
-                    logger.info(f"gpt_sovits Time to first chunk: {end-start}s")
+                    logger.info(f"GPT-SoVITS 首个音频块耗时: {end-start}s")
                     first = False
                 if chunk and self.state==State.RUNNING:
                     yield chunk
             #print("gpt_sovits response.elapsed:", res.elapsed)
         except Exception as e:
-            logger.exception('sovits')
+            logger.exception('SoVITS异常')
 
     def __create_bytes_stream(self,byte_stream):
         #byte_stream=BytesIO(buffer)
         stream, sample_rate = sf.read(byte_stream) # [T*sample_rate,] float64
-        logger.info(f'[INFO]tts audio stream {sample_rate}: {stream.shape}')
+        logger.info(f'[信息]TTS音频流 采样率{sample_rate}: 形状{stream.shape}')
         stream = stream.astype(np.float32)
 
         if stream.ndim > 1:
-            logger.info(f'[WARN] audio has {stream.shape[1]} channels, only use the first.')
+            logger.info(f'[警告] 音频有{stream.shape[1]}个声道，仅使用第一个声道')
             stream = stream[:, 0]
     
         if sample_rate != self.sample_rate and stream.shape[0]>0:
-            logger.info(f'[WARN] audio sample rate is {sample_rate}, resampling into {self.sample_rate}.')
+            logger.info(f'[警告] 音频采样率为{sample_rate}，重采样为{self.sample_rate}')
             stream = resampy.resample(x=stream, sr_orig=sample_rate, sr_new=self.sample_rate)
 
         return stream
 
-    def __time_stretch(self, stream: np.ndarray) -> np.ndarray:
-        """
-        对单声道 float32 PCM 流做不变调变速。依赖 librosa；缺库或异常时回退原速。
-        """
-        # 优先从动态配置读取，支持热更新；否则退回实例上的 speed
-        try:
-            rate = float(get_config('tts_speed', getattr(self, 'speed', 1.0)))
-        except Exception:
-            rate = 1.0
-        if not np.isfinite(rate) or abs(rate - 1.0) < 1e-3:
-            return stream
-        # clamp 合理范围，避免极端速率导致失真
-        rate = max(0.5, min(2.0, rate))
-        try:
-            import librosa  # 延迟导入，避免环境缺库时影响其他路径
-            # librosa 接受 float64，更稳妥地转换后返回 float32
-            y = stream.astype(np.float32)
-            y_stretched = librosa.effects.time_stretch(y=y.astype(np.float32), rate=rate)
-            return y_stretched.astype(np.float32)
-        except Exception as e:
-            logger.warning("[WARN] 语速调整失败或缺少librosa，回退原速。rate=%.3f, err=%s", rate, e)
-            return stream
-
-    def stream_tts(self,audio_stream,msg):
+    def stream_tts(self,audio_stream,msg:tuple[str, dict]):
         text,textevent = msg
         first = True
-        last_stream: np.ndarray | None = None  # 跨块残留缓存，避免边界丢帧
-        # 从配置中读取当前速度作为启动时日志
-        try:
-            self.speed = float(get_config('tts_speed', getattr(self, 'speed', 1.0)))
-        except Exception:
-            pass
-        logger.info("[SovitsTTS] 开始流式播放，speed=%.3f, chunk=%d, sample_rate=%d", getattr(self, 'speed', 1.0), self.chunk, self.sample_rate)
         for chunk in audio_stream:
-            if chunk is None or len(chunk) == 0:
-                continue
-            # 每块开始时尝试刷新速度，便于运行时动态调节
-            try:
-                new_speed = float(get_config('tts_speed', getattr(self, 'speed', 1.0)))
-                if abs(new_speed - getattr(self, 'speed', 1.0)) > 1e-6:
-                    logger.info("[SovitsTTS] 检测到配置更新，语速从 %.3f -> %.3f", getattr(self, 'speed', 1.0), new_speed)
-                self.speed = new_speed
-            except Exception:
-                pass
-            # 将字节块解码为对齐到 self.sample_rate 的 float32 单通道流
-            logger.debug("[SovitsTTS] 收到网络块 bytes=%d", len(chunk))
-            byte_stream = BytesIO(chunk)
-            stream = self.__create_bytes_stream(byte_stream)
-            if stream is None or stream.shape[0] == 0:
-                logger.debug("[SovitsTTS] 解码后为空，跳过该块")
-                continue
-            # 拼接上次残留，确保跨块连续
-            if last_stream is not None and last_stream.shape[0] > 0:
-                logger.debug("[SovitsTTS] 拼接上次残留 samples=%d -> 当前块 samples=%d", last_stream.shape[0], stream.shape[0])
-                stream = np.concatenate([last_stream, stream], axis=0)
-                last_stream = None
-            logger.debug("[SovitsTTS] 解码合并后 samples=%d", stream.shape[0])
-            # 在分片前统一做不变调变速
-            before_len = stream.shape[0]
-            stream = self.__time_stretch(stream)
-            logger.debug("[SovitsTTS] 变速 speed=%.3f: %d -> %d samples", getattr(self, 'speed', 1.0), before_len, stream.shape[0])
-
-            streamlen = stream.shape[0]
-            idx = 0
-            frames_out = 0
-            while streamlen >= self.chunk and self.state == State.RUNNING:
-                eventpoint = None
-                if first:
-                    eventpoint = {'status': 'start', 'text': text, 'msgevent': textevent}
-                    first = False
-                self.parent.put_audio_frame(stream[idx:idx + self.chunk], eventpoint)
-                streamlen -= self.chunk
-                idx += self.chunk
-                frames_out += 1
-            logger.debug("[SovitsTTS] 本块输出帧数=%d, 剩余未满一帧 samples=%d", frames_out, streamlen)
-            # 剩余不足一帧的部分缓存，待下块拼接
-            last_stream = stream[idx:]
-            if last_stream is not None:
-                logger.debug("[SovitsTTS] 缓存残留 samples=%d", last_stream.shape[0])
-
-        # 结束事件：不强行补齐尾巴，按现有逻辑发送一帧静音做收尾
-        logger.info("[SovitsTTS] 流式播放结束，发送结束事件")
-        eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
-        self.parent.put_audio_frame(np.zeros(self.chunk, np.float32), eventpoint)
+            if chunk is not None and len(chunk)>0:          
+                #stream = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32767
+                #stream = resampy.resample(x=stream, sr_orig=32000, sr_new=self.sample_rate)
+                byte_stream=BytesIO(chunk)
+                stream = self.__create_bytes_stream(byte_stream)
+                streamlen = stream.shape[0]
+                idx=0
+                while streamlen >= self.chunk:
+                    eventpoint={}
+                    if first:
+                        eventpoint={'status':'start','text':text}
+                        eventpoint.update(**textevent) 
+                        first = False
+                    self.parent.put_audio_frame(stream[idx:idx+self.chunk],eventpoint)
+                    streamlen -= self.chunk
+                    idx += self.chunk
+        eventpoint={'status':'end','text':text}
+        eventpoint.update(**textevent) 
+        self.parent.put_audio_frame(np.zeros(self.chunk,np.float32),eventpoint)
 
 ###########################################################################################
 class CosyVoiceTTS(BaseTTS):
@@ -1079,6 +1022,195 @@ class DoubaoTTS(BaseTTS):
 
         eventpoint = {'status': 'end', 'text': text, 'msgenvent': textevent}
         self.parent.put_audio_frame(np.zeros(self.chunk, np.float32), eventpoint)
+
+###########################################################################################
+class IndexTTS2(BaseTTS):
+    def __init__(self, opt, parent):
+        super().__init__(opt, parent)
+        # IndexTTS2 配置参数
+        self.server_url = opt.TTS_SERVER  # Gradio服务器地址，如 "http://127.0.0.1:7860/"
+        self.ref_audio_path = opt.REF_FILE  # 参考音频文件路径
+        self.max_tokens = getattr(opt, 'MAX_TOKENS', 120)  # 最大token数
+        
+        # 初始化Gradio客户端
+        try:
+            from gradio_client import Client, handle_file
+            self.client = Client(self.server_url)
+            self.handle_file = handle_file
+            logger.info(f"IndexTTS2 Gradio客户端初始化成功: {self.server_url}")
+        except ImportError:
+            logger.error("IndexTTS2 需要安装 gradio_client: pip install gradio_client")
+            raise
+        except Exception as e:
+            logger.error(f"IndexTTS2 Gradio客户端初始化失败: {e}")
+            raise
+        
+    def txt_to_audio(self, msg):
+        text, textevent = msg
+        try:
+            # 先进行文本分割
+            segments = self.split_text(text)
+            if not segments:
+                logger.error("IndexTTS2 文本分割失败")
+                return
+            
+            logger.info(f"IndexTTS2 文本分割为 {len(segments)} 个片段")
+            
+            # 循环生成每个片段的音频
+            for i, segment_text in enumerate(segments):
+                if self.state != State.RUNNING:
+                    break
+                    
+                logger.info(f"IndexTTS2 正在生成第 {i+1}/{len(segments)} 段音频...")
+                audio_file = self.indextts2_generate(segment_text)
+                
+                if audio_file:
+                    # 为每个片段创建事件信息
+                    segment_msg = (segment_text, textevent)
+                    self.file_to_stream(audio_file, segment_msg, is_first=(i==0), is_last=(i==len(segments)-1))
+                else:
+                    logger.error(f"IndexTTS2 第 {i+1} 段音频生成失败")
+                    
+        except Exception as e:
+            logger.exception(f"IndexTTS2 txt_to_audio 错误: {e}")
+
+    def split_text(self, text):
+        """使用 IndexTTS2 API 分割文本"""
+        try:
+            logger.info(f"IndexTTS2 开始分割文本，长度: {len(text)}")
+            
+            # 调用文本分割 API
+            result = self.client.predict(
+                text=text,
+                max_text_tokens_per_segment=self.max_tokens,
+                api_name="/on_input_text_change"
+            )
+            
+            # 解析分割结果
+            if 'value' in result and 'data' in result['value']:
+                data = result['value']['data']
+                logger.info(f"IndexTTS2 共分割为 {len(data)} 个片段")
+                
+                segments = []
+                for i, item in enumerate(data):
+                    序号 = item[0] + 1
+                    分句内容 = item[1]
+                    token数 = item[2]
+                    logger.info(f"片段 {序号}: {len(分句内容)} 字符, {token数} tokens")
+                    segments.append(分句内容)
+                
+                return segments
+            else:
+                logger.error(f"IndexTTS2 文本分割结果格式异常: {result}")
+                return [text]  # 如果分割失败，返回原文本
+                
+        except Exception as e:
+            logger.exception(f"IndexTTS2 文本分割失败: {e}")
+            return [text]  # 如果分割失败，返回原文本
+
+    def indextts2_generate(self, text):
+        """调用 IndexTTS2 Gradio API 生成语音"""
+        start = time.perf_counter()
+        
+        try:
+            # 调用 gen_single API
+            result = self.client.predict(
+                emo_control_method="Same as the voice reference",
+                prompt=self.handle_file(self.ref_audio_path),
+                text=text,
+                emo_ref_path=self.handle_file(self.ref_audio_path),
+                emo_weight=0.8,
+                vec1=0.5,
+                vec2=0,
+                vec3=0,
+                vec4=0,
+                vec5=0,
+                vec6=0,
+                vec7=0,
+                vec8=0,
+                emo_text="",
+                emo_random=False,
+                max_text_tokens_per_segment=self.max_tokens,
+                param_16=True,
+                param_17=0.8,
+                param_18=30,
+                param_19=0.8,
+                param_20=0,
+                param_21=3,
+                param_22=10,
+                param_23=1500,
+                api_name="/gen_single"
+            )
+            
+            end = time.perf_counter()
+            logger.info(f"IndexTTS2 片段生成完成，耗时: {end-start:.2f}s")
+            
+            # 返回生成的音频文件路径
+            if 'value' in result:
+                audio_file = result['value']
+                return audio_file
+            else:
+                logger.error(f"IndexTTS2 结果格式异常: {result}")
+                return None
+                
+        except Exception as e:
+            logger.exception(f"IndexTTS2 API调用失败: {e}")
+            return None
+
+    def file_to_stream(self, audio_file, msg, is_first=False, is_last=False):
+        """将音频文件转换为音频流"""
+        text, textevent = msg
+        
+        try:
+            # 读取音频文件
+            stream, sample_rate = sf.read(audio_file)
+            logger.info(f'IndexTTS2 音频文件 {sample_rate}Hz: {stream.shape}')
+            
+            # 转换为float32
+            stream = stream.astype(np.float32)
+            
+            # 如果是多声道，只取第一个声道
+            if stream.ndim > 1:
+                logger.info(f'IndexTTS2 音频有 {stream.shape[1]} 个声道，只使用第一个')
+                stream = stream[:, 0]
+            
+            # 重采样到目标采样率
+            if sample_rate != self.sample_rate and stream.shape[0] > 0:
+                logger.info(f'IndexTTS2 重采样: {sample_rate}Hz -> {self.sample_rate}Hz')
+                stream = resampy.resample(x=stream, sr_orig=sample_rate, sr_new=self.sample_rate)
+            
+            # 分块发送音频流
+            streamlen = stream.shape[0]
+            idx = 0
+            first_chunk = True
+            
+            while streamlen >= self.chunk and self.state == State.RUNNING:
+                eventpoint = None
+                
+                # 只在第一个片段的第一个chunk发送start事件
+                if is_first and first_chunk:
+                    eventpoint = {'status': 'start', 'text': text, 'msgevent': textevent}
+                    first_chunk = False
+                
+                self.parent.put_audio_frame(stream[idx:idx + self.chunk], eventpoint)
+                idx += self.chunk
+                streamlen -= self.chunk
+            
+            # 只在最后一个片段发送end事件
+            if is_last:
+                eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
+                self.parent.put_audio_frame(np.zeros(self.chunk, np.float32), eventpoint)
+            
+            # 清理临时文件
+            try:
+                if os.path.exists(audio_file):
+                    os.remove(audio_file)
+                    logger.info(f"IndexTTS2 已删除临时文件: {audio_file}")
+            except Exception as e:
+                logger.warning(f"IndexTTS2 删除临时文件失败: {e}")
+                
+        except Exception as e:
+            logger.exception(f"IndexTTS2 音频流处理失败: {e}")
 
 ###########################################################################################
 class XTTS(BaseTTS):
