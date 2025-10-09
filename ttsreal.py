@@ -380,6 +380,9 @@ class SovitsTTS(BaseTTS):
 
     def stream_tts(self,audio_stream,msg:tuple[str, dict]):
         text,textevent = msg
+        # 确保textevent不为None，避免update时出错
+        if textevent is None:
+            textevent = {}
         first = True
         for chunk in audio_stream:
             if chunk is not None and len(chunk)>0:          
@@ -994,7 +997,7 @@ class DoubaoTTS(BaseTTS):
                 while streamlen >= self.chunk:
                     eventpoint = None
                     if first:
-                        eventpoint = {'status': 'start', 'text': text, 'msgenvent': textevent}
+                        eventpoint = {'status': 'start', 'text': text, 'msgevent': textevent}
                         logger.info("发送音频开始事件")
                         tts_logger.info("[DoubaoTTS] 发送开始事件 text_len=%d", len(text or ''))
                         first = False
@@ -1020,7 +1023,7 @@ class DoubaoTTS(BaseTTS):
         logger.info("发送音频结束事件")
         tts_logger.info("[DoubaoTTS] 流式结束 块=%d 帧=%d", chunk_count, total_audio_frames)
 
-        eventpoint = {'status': 'end', 'text': text, 'msgenvent': textevent}
+        eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
         self.parent.put_audio_frame(np.zeros(self.chunk, np.float32), eventpoint)
 
 ###########################################################################################
