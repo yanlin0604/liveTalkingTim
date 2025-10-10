@@ -1250,7 +1250,13 @@ async def main():
     
     app = await create_management_app(args.config_file, args.port)
     
-    runner = web.AppRunner(app)
+    # 使用自定义访问日志格式，避免 start_time 为 None 的错误
+    # access_log=None 只禁用 HTTP 访问日志，不影响业务日志
+    import logging
+    access_logger = logging.getLogger('aiohttp.access')
+    access_logger.setLevel(logging.WARNING)  # 只记录警告和错误
+    
+    runner = web.AppRunner(app, access_log=access_logger)
     await runner.setup()
     
     site = web.TCPSite(runner, '0.0.0.0', args.port)

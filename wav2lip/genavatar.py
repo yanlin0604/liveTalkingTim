@@ -315,6 +315,24 @@ def clean_directory(directory):
 
 if __name__ == "__main__":
     try:
+        # 打印所有参数到日志
+        print("=" * 80)
+        print("📋 Wav2Lip视频处理参数配置:")
+        print("=" * 80)
+        print(f"  🎭 角色名称 (avatar_id): {args.avatar_id}")
+        print(f"  📁 头像基础目录 (avatar_base_dir): {args.avatar_base_dir}")
+        print(f"  🎬 输入视频路径 (video_path): {args.video_path}")
+        print(f"  📐 输出图片尺寸 (img_size): {args.img_size}x{args.img_size}")
+        print(f"  📦 批处理帧数 (batch_frames): {args.batch_frames}")
+        print(f"  🔍 人脸检测批大小 (face_det_batch_size): {args.face_det_batch_size}")
+        print(f"  📏 图像缩放因子 (resize_factor): {args.resize_factor}")
+        print(f"  🔲 人脸填充值 (pads): 上={args.pads[0]}, 下={args.pads[1]}, 左={args.pads[2]}, 右={args.pads[3]}")
+        print(f"  🎯 使用video2imgs模式 (use_video2imgs): {args.use_video2imgs}")
+        print(f"  🔄 关闭平滑处理 (nosmooth): {args.nosmooth}")
+        print(f"  💻 强制使用CPU (force_cpu): {args.force_cpu}")
+        print(f"  ⚙️  实际使用设备 (device): {device}")
+        print("=" * 80)
+        
         # 创建temp目录（如果不存在）
         if not os.path.exists('temp'):
             os.makedirs('temp')
@@ -336,8 +354,6 @@ if __name__ == "__main__":
         if os.path.exists(coords_path):
             os.remove(coords_path)
             print(f"progress:已删除旧的坐标文件: {coords_path}")
-        
-        print("progress:当前参数设置:", args)
 
         if args.use_video2imgs:
             # 使用原来的处理方式
