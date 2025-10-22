@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-orange.svg)](https://pytorch.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
 </div>
 
@@ -489,7 +489,7 @@ python log_reader_web.py
 
 ## 📄 开源协议
 
-本项目基于 [MIT License](LICENSE) 开源
+本项目基于 [Apache-2.0 License](LICENSE) 开源
 
 ---
 
