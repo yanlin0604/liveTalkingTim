@@ -2,7 +2,7 @@
 
 **支持实时交互、直播推流、语音识别、AI对话的全栈数字人解决方案**
 
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-orange.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -61,6 +61,7 @@ LiveTalking 是一个功能完整的**智能数字人交互系统**，集成了�
 - **DashScope** - 阿里云通义千问
 - **MaxKB** - 知识库问答系统
 - **Unimed** - 自定义API集成
+- **Dify** - Dify知识库
 - 支持流式对话和上下文记忆
 
 ### 💬 弹幕互动系统
@@ -128,7 +129,7 @@ LiveTalking/
 ## 🚀 快速开始
 
 ### 环境要求
-- **Python**: 3.8+
+- **Python**: 3.10+
 - **CUDA**: 11.7+ (GPU推理)
 - **操作系统**: Windows / Linux / macOS
 - **内存**: 建议 16GB+
